@@ -1487,7 +1487,7 @@ def agent_loop(game_id, agent_id):
 
     while True:
         try:
-            #current_agents = {}
+            current_agents = {}
 
             if time.time() - last_state_update > STATE_TIMEOUT:
 
