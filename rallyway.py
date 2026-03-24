@@ -5,6 +5,7 @@ import random
 import re
 import os
 import json
+import ast
 from datetime import datetime, timedelta, timezone
 import sys
 from tg_report import send_telegram, send_game_report
@@ -32,6 +33,23 @@ session.headers.update({
     "Content-Type": "application/json",
     "X-API-Key": API_KEY
 })
+
+# 🔥 TAMBAHAN PROXY
+PROXY = os.getenv("PROXY")
+
+if PROXY:
+    session.proxies.update({
+        "http": PROXY,
+        "https": PROXY
+    })
+    print("🌐 Proxy aktif:", PROXY)
+else:
+    print("⚠ Proxy tidak digunakan")
+    try:
+        ip_check = session.get("https://api.ipify.org?format=json", timeout=10)
+        print("🌍 IP AKTIF:", ip_check.text)
+    except Exception as e:
+        print("❌ Gagal cek IP:", e)
 # =========================
 # MEMORY REGION & DEADZONE
 # =========================
@@ -85,7 +103,7 @@ CURSE_STATE = {
 SKIP_ITEMS = {
     "megaphone",
     "map",
-    "Radio"
+    "radio"
 }
 PREV_VISIBLE_AGENTS = {}
 LAST_ATTACK_TARGET = None
@@ -107,7 +125,7 @@ def detect_curse(state, my_id):
         content = (msg.get("content") or "").strip()
         msg_id = msg.get("id")
 
-        if "[Curse]" not in content:
+        if "[저주]" not in content:
             continue
 
         if msg_id == LAST_CURSE_ID:
@@ -124,6 +142,11 @@ def detect_curse(state, my_id):
         }
 
     return None
+
+
+
+def safe_eval(expr):
+    return eval(expr, {"__builtins__": {}}, {})
 
 def solve_curse(question):
     try:
@@ -184,7 +207,7 @@ def solve_curse(question):
             expr = re.sub(r'\s+', ' ', expr).strip()
 
             try:
-                answer = str(eval(expr))
+                answer = str(safe_eval(expr))
             except:
                 answer = "idk"
 
@@ -275,7 +298,7 @@ def update_threat_map(state):
 
     # decay
     for r in list(THREAT_MAP.keys()):
-        THREAT_MAP[r] *= 0.9
+        THREAT_MAP[r] = THREAT_MAP[r]*0.95 + random.uniform(-1,1)
 
 def choose_goal(state):
     global last_target_id
@@ -306,11 +329,6 @@ def choose_goal(state):
     unexplored = [
         rid for rid, data in MAP_MEMORY.items()
         if not data.get("isDeathZone")
-    ]
-
-    enemies = [
-        e for e in state.get("visibleAgents", [])
-        if not is_teammate(e.get("name"))
     ]
 
     if enemies:
@@ -389,7 +407,7 @@ def astar(start, goal, state):
 def get_agent_id_from_game(game_id, agent_name):
     """Cari agent_id di game tertentu berdasarkan nama agent"""
     try:
-        r = requests.get(f"{BASE_URL}/games/{game_id}", headers={"X-API-Key": API_KEY}, timeout=10)
+        r = session.get(f"{BASE_URL}/games/{game_id}", headers={"X-API-Key": API_KEY}, timeout=10)
         if r.status_code != 200:
             return None
         agents = r.json().get("data", {}).get("agents", [])
@@ -491,7 +509,7 @@ def print_header(game_name=None, game_id=None, agent_id=None):
 
 def get_state(game_id, agent_id):
     try:
-        r = requests.get(
+        r = session.get(
             f"{BASE_URL}/games/{game_id}/agents/{agent_id}/state",
             headers={"X-API-Key": API_KEY},
             timeout=15
@@ -518,8 +536,8 @@ def wait_rate_limit():
     global LAST_API_CALL
     now = time.time()
     diff = now - LAST_API_CALL
-    if diff < 0.35:
-        time.sleep(0.35 - diff)
+    if diff < 0.5:
+        time.sleep(0.5 - diff)
     LAST_API_CALL = time.time()
 
 
@@ -527,7 +545,7 @@ def safe_get(url, retries=3):
     for attempt in range(retries):
         try:
             wait_rate_limit()
-            r = requests.get(url, headers={"X-API-Key": API_KEY}, timeout=15)
+            r = session.get(url, headers={"X-API-Key": API_KEY}, timeout=15)
 
             if r.status_code == 429:
                 print("⚠ Rate limit, tunggu 1 detik...")
@@ -888,7 +906,6 @@ def smart_move(state, mode="normal"):
     my_hp = me.get("hp", 100)
     my_atk = me.get("atk", 10)
 
-
     # =========================
     # 👥 ENEMY ANALYSIS
     # =========================
@@ -965,6 +982,10 @@ def smart_move(state, mode="normal"):
     for rid in valid_moves:
         score = 0
 
+        if rid in enemy_regions:
+            hp = enemy_regions[rid].get("hp", 100)
+            score += max(0, 120 - hp)
+        
         # 🎯 goal pressure
         if next_step:
             score += 300 if rid == next_step else -30
@@ -974,7 +995,7 @@ def smart_move(state, mode="normal"):
 
         # 👑 GUARDIAN GLOBAL THREAT (HIGHEST PRIORITY)
         if any(is_guardian(e) and e.get("regionId") == rid for e in enemies):
-            score -= 1000
+            score += 1000
 
         # 👥 ENEMY LOGIC (NEW CORE)
         if rid in dangerous_regions:
@@ -1059,7 +1080,7 @@ def choose_recovery(self_data):
 
     return None
 
-def choose_best_target(enemies, my_attack, my_hp):
+def choose_best_target(enemies, my_attack, my_hp, state):
     global last_target_id
     global SQUAD_TARGET
     global TARGET_LOCK
@@ -1078,14 +1099,14 @@ def choose_best_target(enemies, my_attack, my_hp):
         target = min(one_hit_targets, key=lambda x: x.get("hp", 999))
 
         TARGET_LOCK["id"] = target.get("id")
-        TARGET_LOCK["until_turn"] = current_time + 2
+        TARGET_LOCK["until_turn"] = state.get("turn", 0) + 2
 
         return target  
     
     # =========================
     # 🔒 TARGET LOCK
     # =========================
-    if TARGET_LOCK["id"] and current_time < TARGET_LOCK["until_turn"]:
+    if TARGET_LOCK["id"] and state.get("turn", 0) < TARGET_LOCK["until_turn"]:
         for e in enemies:
             if e.get("id") == TARGET_LOCK["id"]:
                 return e
@@ -1136,7 +1157,7 @@ def choose_best_target(enemies, my_attack, my_hp):
 
     if best_target:
         TARGET_LOCK["id"] = best_target.get("id")
-        TARGET_LOCK["until_turn"] = current_time + 2
+        TARGET_LOCK["until_turn"] = state.get("turn", 0) + 2
         
     return best_target
 
@@ -1203,7 +1224,7 @@ def should_escape(state, me, enemies_here, my_region, pending_dz):
     if len(enemies_here) >= 3:
         return True
 
-    if total_enemy_atk > my_hp * 1.5:
+    if total_enemy_atk > my_hp * 2.2:
         return True
 
     weapon = current_weapon(me)
@@ -1224,7 +1245,7 @@ def combat_decision(state, me, enemies_here):
 
     global LAST_ATTACK_TARGET
 
-    target = choose_best_target(enemies_here, my_attack, my_hp)
+    target = choose_best_target(enemies_here, my_attack, my_hp, state)
 
     if not target:
         return None
@@ -1295,6 +1316,9 @@ def explore_logic(state, me, visible_agents):
     visible_items = state.get("visibleItems", [])
 
     if not visible_items and not visible_agents:
+
+        if len(MAP_MEMORY) < 50:
+            return {"type": "explore"}
 
         if random.random() < 0.75:
             return smart_move(state)
@@ -1534,13 +1558,13 @@ def agent_loop(game_id, agent_id):
 
                 game_data = r_game.json().get("data", {})
 
-                agents = game_data.get("agents", [])
+                agents = game_data.get("agents") or []
                 my_data = next((a for a in agents if a.get("id") == agent_id), {})
 
                 kills = GAME_STATS["kills"]
                 deaths = GAME_STATS["deaths"]
 
-                result_data = state.get("result", {})
+                result_data = game_data.get("result", {})
                 result = "WIN" if result_data.get("isWinner") else "LOSS"
 
                 send_finish_telegram(result, game_id, kills, deaths)
@@ -1559,16 +1583,6 @@ def agent_loop(game_id, agent_id):
             r_state = safe_get(
                 f"{BASE_URL}/games/{game_id}/agents/{agent_id}/state"
             )
-
-            # cek siapa yang mati dibanding turn sebelumnya
-            if current_agents:
-                for aid, prev in PREV_VISIBLE_AGENTS.items():
-                    now = current_agents.get(aid)
-
-                    if prev.get("hp", 1) > 0 and (not now or now.get("hp", 0) <= 0):
-                        if LAST_ATTACK_TARGET and LAST_ATTACK_TARGET.get("id") == aid:
-                            GAME_STATS["kills"] += 1
-                            log(f"🔥 KILL CONFIRMED → {prev.get('name')}")
 
             # update state lama
             PREV_VISIBLE_AGENTS = current_agents
@@ -1844,8 +1858,10 @@ def agent_loop(game_id, agent_id):
                             # ✅ ONLY COUNT KILL IF SERVER CONFIRMS DEATH
                             if main_action["type"] == "attack":                                    
 
-                                    if LAST_ATTACK_TARGET:
-                                        LAST_KILL_REGION = LAST_ATTACK_TARGET.get("regionId")
+                                    for aid, prev in PREV_VISIBLE_AGENTS.items():
+                                        if aid not in current_agents:
+                                            if LAST_ATTACK_TARGET and LAST_ATTACK_TARGET.get("id") == aid:
+                                                GAME_STATS["kills"] += 1
 
                             last_turn_action_sent = current_turn
 
