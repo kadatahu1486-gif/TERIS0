@@ -1317,9 +1317,6 @@ def explore_logic(state, me, visible_agents):
 
     if not visible_items and not visible_agents:
 
-        if len(MAP_MEMORY) < 50:
-            return {"type": "explore"}
-
         if random.random() < 0.75:
             return smart_move(state)
 
