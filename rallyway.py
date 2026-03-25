@@ -125,7 +125,7 @@ def detect_curse(state, my_id):
         content = (msg.get("content") or "").strip()
         msg_id = msg.get("id")
 
-        if "[저주]" not in content:
+        if "[Curse]" not in content:
             continue
 
         if msg_id == LAST_CURSE_ID:
@@ -133,7 +133,7 @@ def detect_curse(state, my_id):
 
         question = content.replace("[Curse]", "", 1)
         question = question.split("Scene:")[0].strip()
-        question = question.split("\n")[0].strip()
+        #question = question.split("\n")[0].strip()
 
         return {
             "id": msg_id,
@@ -150,6 +150,8 @@ def safe_eval(expr):
 
 def solve_curse(question):
     try:
+        import re
+
         original = question.strip()
         q = original
 
@@ -166,97 +168,70 @@ def solve_curse(question):
         q_lower = q.lower()
 
         # =========================
-        # 💀 CONTRADICTION
+        # 🧹 CLEAN CURSE NOISE
         # =========================
-        if "contradiction" in q_lower or "paradox" in q_lower:
-            match = re.search(r"'([^']+)'", q)
-
-            if match:
-                phrase = match.group(1)
-
-                if "," in phrase:
-                    a, b = phrase.split(",", 1)
-                    answer = f"{a.strip()} contradicts {b.strip()}."
-                else:
-                    answer = "Contradiction detected."
-            else:
-                answer = "Contradiction detected."
+        q = re.sub(r"\[.*?curse.*?\]", "", q, flags=re.IGNORECASE)
+        q = re.sub(r"background:.*", "", q, flags=re.IGNORECASE)
+        q = re.sub(r"scene:.*", "", q, flags=re.IGNORECASE)
+        q_lower = q.lower()
 
         # =========================
-        # 🧮 MATH
+        # 🧮 MATH (PRIORITY #1)
         # =========================
-        elif re.search(r'[0-9]', q):
+        math_match = re.search(r'(\d+\s*[\+\-\*/×÷]\s*\d+)', q)
 
-            expr = q.lower()
+        if math_match:
+            expr = math_match.group(1)
 
-            # 🔤 kata → operator
-            expr = expr.replace("plus", "+")
-            expr = expr.replace("minus", "-")
-            expr = expr.replace("times", "*")
-            expr = expr.replace("multiplied by", "*")
-            expr = expr.replace("divided by", "/")
-
-            # 🔥 handle "x"
-            expr = re.sub(r'\bx\b', '*', expr)
-
-            # simbol
             expr = expr.replace("×", "*").replace("÷", "/")
 
-            # bersihin
-            expr = re.sub(r'[^0-9+\-*/(). ]', '', expr)
-            expr = re.sub(r'\s+', ' ', expr).strip()
-
             try:
-                answer = str(safe_eval(expr))
+                answer = str(eval(expr))
             except:
                 answer = "idk"
 
         # =========================
-        # 🎯 KEYWORD TRAP
+        # 💀 CONTRADICTION
         # =========================
-        elif "opposite" in q_lower:
-            word = re.findall(r'"([^"]+)"', q)
-            if word:
-                # simple mapping
-                opposites = {
-                    "hot": "cold",
-                    "up": "down",
-                    "left": "right",
-                    "true": "false",
-                    "yes": "no"
-                }
-                answer = opposites.get(word[0].lower(), "opposite")
-            else:
-                answer = "idk"
+        elif "contradiction" in q_lower or "paradox" in q_lower:
+            match = re.search(r"'([^']+)'", q)
 
+            if match and "," in match.group(1):
+                a, b = match.group(1).split(",", 1)
+                answer = f"{a.strip()} contradicts {b.strip()}."
+            else:
+                answer = "Contradiction detected."
+
+        # =========================
+        # 🔁 REVERSE / BACKWARDS
+        # =========================
+        elif "reverse" in q_lower or "backwards" in q_lower:
+            word = re.findall(r"'([^']+)'", q)
+            answer = word[0][::-1] if word else "idk"
+
+        # =========================
+        # 🔄 REPEAT
+        # =========================
         elif "repeat" in q_lower:
             word = re.findall(r'"([^"]+)"', q)
             answer = word[0] if word else "idk"
 
-        elif "reverse" in q_lower:
-            word = re.findall(r'"([^"]+)"', q)
-            answer = word[0][::-1] if word else "idk"
-
+        # =========================
+        # ⚖️ TRUE CHECK
+        # =========================
         elif "is this true" in q_lower:
-
             statement_match = re.search(r"'([^']+)'", q)
 
             if statement_match:
                 statement = statement_match.group(1).lower()
-
-                # rule sederhana
-                if "all" in statement:
-                    answer = "no"   # karena biasanya ada exception
-                else:
-                    answer = "yes"
+                answer = "no" if "all" in statement else "yes"
             else:
                 answer = "unknown"
 
         # =========================
-        # 🧩 RIDDLE (fallback)
+        # 🧩 RIDDLE (FALLBACK)
         # =========================
         else:
-            # simple riddle answers (bisa kamu tambah)
             riddles = {
                 "speak without a mouth": "echo",
                 "has keys but can't open locks": "piano",
@@ -271,10 +246,21 @@ def solve_curse(question):
                     break
 
         # =========================
-        # 🌸 AUTO CONTEXT (WAJIB)
+        # 🌸 CONTEXT WEAVING (SAFE)
         # =========================
+        def clean_context(context):
+            context = context.strip()
+
+            context = re.sub(r"mention this in your answer\.?", "", context, flags=re.IGNORECASE)
+            context = re.sub(r"weave this into your response\.?", "", context, flags=re.IGNORECASE)
+
+            return context.strip()
+
         if context:
-            answer = f"{answer} {context}"
+            context_clean = clean_context(context).split(".")[0]
+
+            # natural weaving (bukan tempel mentah)
+            answer = f"{answer}, like {context_clean}"
 
         return answer
 
@@ -282,7 +268,6 @@ def solve_curse(question):
         print("solver error:", e)
         return "idk"
     
-
 def update_threat_map(state):
     global THREAT_MAP
 
@@ -812,6 +797,7 @@ def update_map_memory(state):
             "name": r.get("name"),   # 🔥 INI PENTING
             "connections": r.get("connections", []),
             "isDeathZone": r.get("isDeathZone", False),
+            "items": r.get("items", []),
             "isMine": r.get("hasMine", False),
             "terrain": r.get("terrain"),
             "visionRequirement": r.get("visionRequirement", 0),
@@ -979,8 +965,43 @@ def smart_move(state, mode="normal"):
     best_region = None
     best_score = -9999
 
+    #filtered_moves = []
+
+    #for rid in valid_moves:
+        #mem = MAP_MEMORY.get(rid, {})
+
+        #f mem.get("visionRequirement") == "minus":
+            #continue
+
+        #if mem.get("visionModifier") == "minus":
+            #continue
+
+        #filtered_moves.append(rid)
+
+    #valid_moves = filtered_moves
+    
     for rid in valid_moves:
         score = 0
+
+        mem = MAP_MEMORY.get(rid, {})
+
+        if mem.get("visionModifier") == "minus":
+            score -= 500
+            continue
+
+        # 💰 PRIORITY LOOT REGION (MOLTZ / ITEM IMPORTANT)
+        region_items = MAP_MEMORY.get(rid, {}).get("items", [])
+
+        for item in region_items:
+            name = (item.get("name") or "").lower()
+
+            # 🔥 MOLTZ / CURRENCY PRIORITY HIGHEST
+            if item.get("type") == "currency" or "moltz" in name:
+                score += 900
+
+            # 💎 rare weapon priority
+            if item.get("category") == "weapon":
+                score += item.get("atkBonus", 0) * 50
 
         if rid in enemy_regions:
             hp = enemy_regions[rid].get("hp", 100)
