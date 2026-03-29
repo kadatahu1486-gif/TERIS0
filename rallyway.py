@@ -259,6 +259,11 @@ def solve_logic(q):
             return str(result)
         except:
             pass
+    # COUNT LETTERS
+    letters_match = re.search(r"how many letters are in (?:the word )?'([^']+)'", q_lower)
+    if letters_match:
+        txt = letters_match.group(1)
+        return str(len(txt.replace(" ", "")))  # hapus spasi
 
     # SYLLOGISM
     match_all = re.search(r"all (\w+) are (\w+)", q_lower)
