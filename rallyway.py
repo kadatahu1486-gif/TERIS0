@@ -26,7 +26,6 @@ if not API_KEY:
     raise Exception("API_KEY tidak ditemukan di environment")
 
 AGENT_NAME = os.getenv("AGENT_NAME", "ForTres")
-
 session = requests.Session()
 
 session.headers.update({
@@ -65,7 +64,7 @@ MAP_MEMORY = {}
 STATE_TIMEOUT = 60
 last_state_update = time.time()
 WITA = timezone(timedelta(hours=8))
-MAX_LAST_REGIONS = 10
+MAX_LAST_REGIONS = 30
 TEAM_PREFIXES = ("ForTres", "SEKAI", "GORIS", "GLORIES", "TERIS", "LOSTV", "IMOAIX", "LBXES", "TSAL", "NEEST", "LOOBS", "ENOZ", "NOIGER", "BOBRIO")
 
 def is_teammate(name):
@@ -109,10 +108,14 @@ PREV_VISIBLE_AGENTS = {}
 LAST_ATTACK_TARGET = None
 LAST_KILL_REGION = None
 GAME_FINISHED_SENT = False
+LAST_CURSE_TIME = 0
+CURSE_COOLDOWN = 3
 # ---------------- UTILS ----------------
 
 def detect_curse(state, my_id):
     global LAST_CURSE_ID
+
+    latest_curse = None
 
     for msg in state.get("recentMessages", []):
 
@@ -123,157 +126,260 @@ def detect_curse(state, my_id):
             continue
 
         content = (msg.get("content") or "").strip()
-        msg_id = msg.get("id")
 
         if "[Curse]" not in content:
             continue
 
-        if msg_id == LAST_CURSE_ID:
-            continue
+        # 🔥 selalu ambil yang TERBARU
+        latest_curse = msg
 
-        question = content.replace("[Curse]", "", 1)
-        question = question.split("Scene:")[0].strip()
-        #question = question.split("\n")[0].strip()
+    if not latest_curse:
+        return None
 
-        return {
-            "id": msg_id,
-            "question": question,
-            "senderId": msg.get("senderId")
-        }
+    msg_id = latest_curse.get("id")
 
-    return None
+    # 🔥 skip kalau sudah diproses
+    if msg_id == LAST_CURSE_ID:
+        return None
 
+    question = latest_curse.get("content").replace("[Curse]", "", 1).strip()
+    #question = question.split("\n")[0].strip()
+    return {
+        "id": msg_id,
+        "question": question,
+        "senderId": latest_curse.get("senderId")
+    }
 
+def shorten_bg(text):
+    text = text.lower()
 
-def safe_eval(expr):
-    return eval(expr, {"__builtins__": {}}, {})
+    # hapus noise
+    text = re.sub(r"\b(there is|imagine)\b", "", text)
+    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing)\b", "", text)
+    text = re.sub(r"\bin the background\b", "", text)
+
+    text = re.sub(r"\s+", " ", text).strip()
+
+    words = text.split()
+    core = " ".join(words[:3])
+
+    return core.capitalize()
+
 
 def solve_curse(question):
     try:
-        import re
-
-        original = question.strip()
-        q = original
+        q = question.strip()
 
         # =========================
-        # 🌸 SPLIT CONTEXT
+        # SPLIT
         # =========================
-        context = ""
+        parts = q.split("\n\n", 1)
+        main_question = parts[0].strip()
+        background = parts[1].strip() if len(parts) > 1 else ""
 
-        if "context:" in q.lower():
-            parts = re.split(r'context:', q, flags=re.IGNORECASE)
-            q = parts[0].strip()
-            context = parts[1].strip()
-
+        q = main_question
         q_lower = q.lower()
+        full_lower = question.lower()
+
+        answer = "idk"
 
         # =========================
-        # 🧹 CLEAN CURSE NOISE
+        # 🔥 DETECT BG MODE
         # =========================
-        q = re.sub(r"\[.*?curse.*?\]", "", q, flags=re.IGNORECASE)
-        q = re.sub(r"background:.*", "", q, flags=re.IGNORECASE)
-        q = re.sub(r"scene:.*", "", q, flags=re.IGNORECASE)
-        q_lower = q.lower()
+        bg_mode = "none"
+
+        if "acknowledge" in full_lower:
+            bg_mode = "acknowledge"
+        elif "brief" in full_lower:
+            bg_mode = "brief"
+        elif "mention" in full_lower or "include" in full_lower or "reference" in full_lower:
+            bg_mode = "brief"
+        elif "respond" in full_lower or "react" in full_lower:
+            bg_mode = "respond"
 
         # =========================
-        # 🧮 MATH (PRIORITY #1)
+        # 🔹 CONTRADICTION
         # =========================
-        math_match = re.search(r'(\d+\s*[\+\-\*/×÷]\s*\d+)', q)
+        if "contradiction" in q_lower or "paradox" in q_lower:
+            match = re.search(r"'([^']+)'", q)
+            if match:
+                clauses = [c.strip() for c in match.group(1).split(",")]
+                if len(clauses) >= 2:
+                    answer = f"{clauses[0]} contradicts {clauses[1]}"
+                else:
+                    answer = "the statement is contradictory"
+            else:
+                answer = "the statements contradict each other"
 
-        if math_match:
-            expr = math_match.group(1)
+        # =========================
+        # 🔹 NUMBER QUESTION
+        # =========================
+        number_match = re.search(r"what is the number (\d+)", q_lower)
+        number_flag = False
+        if number_match:
+            answer = f"number {number_match.group(1)}"
+            number_flag = True
 
+        # =========================
+        # 🧮 MATH + TEXT COUNTING
+        # =========================
+        if answer == "idk":
+
+            # 🔥 COUNT EXCLAMATION
+            ex_match = re.search(
+                r"how many exclamation marks are in '([^']+)'", q_lower
+            )
+            if ex_match:
+                answer = str(ex_match.group(1).count("!"))
+
+            # 🔥 COUNT LETTERS
+            elif re.search(r"how many letters are in '([^']+)'", q_lower):
+                txt = re.search(r"'([^']+)'", q).group(1)
+                answer = str(len(txt.replace(" ", "")))
+
+            else:
+                expr = q_lower
+                expr = expr.replace("plus", "+").replace("minus", "-")
+                expr = expr.replace("times", "*").replace("multiplied by", "*")
+                expr = expr.replace("divided by", "/")
+                expr = expr.replace("×", "*").replace("÷", "/")
+
+                math_match = re.search(r'(\d+\s*[\+\-\*/]\s*\d+)', expr)
+
+                if math_match:
+                    try:
+                        result = eval(math_match.group(1))
+                        if isinstance(result, float) and result.is_integer():
+                            result = int(result)
+                        answer = str(result)
+                    except:
+                        answer = "idk"
+            expr = q_lower
+            expr = expr.replace("plus", "+").replace("minus", "-")
+            expr = expr.replace("times", "*").replace("multiplied by", "*")
+            expr = expr.replace("divided by", "/")
             expr = expr.replace("×", "*").replace("÷", "/")
 
-            try:
-                answer = str(eval(expr))
-            except:
-                answer = "idk"
+            math_match = re.search(r'(\d+\s*[\+\-\*/]\s*\d+)', expr)
+
+            if math_match and not number_flag:
+                try:
+                    result = eval(math_match.group(1))
+                    if isinstance(result, float) and result.is_integer():
+                        result = int(result)
+                    answer = str(result)
+                except:
+                    answer = "idk"
 
         # =========================
-        # 💀 CONTRADICTION
+        # 🔹 LOGIC
         # =========================
-        elif "contradiction" in q_lower or "paradox" in q_lower:
-            match = re.search(r"'([^']+)'", q)
+        if answer == "idk":
 
-            if match and "," in match.group(1):
-                a, b = match.group(1).split(",", 1)
-                answer = f"{a.strip()} contradicts {b.strip()}."
-            else:
-                answer = "Contradiction detected."
+            # syllogism (cats → animals)
+            match_all = re.search(r"all (\w+) are (\w+)", q_lower)
+            match_is = re.search(r"(\w+) is a (\w+)", q_lower)
 
-        # =========================
-        # 🔁 REVERSE / BACKWARDS
-        # =========================
-        elif "reverse" in q_lower or "backwards" in q_lower:
-            word = re.findall(r"'([^']+)'", q)
-            answer = word[0][::-1] if word else "idk"
+            if match_all and match_is:
+                subject = match_all.group(1).rstrip("s")
+                predicate = match_all.group(2).rstrip("s")
+                entity_class = match_is.group(2).rstrip("s")
 
-        # =========================
-        # 🔄 REPEAT
-        # =========================
-        elif "repeat" in q_lower:
-            word = re.findall(r'"([^"]+)"', q)
-            answer = word[0] if word else "idk"
+                if entity_class == subject:
+                    answer = "yes"
+                else:
+                    answer = "no"
 
-        # =========================
-        # ⚖️ TRUE CHECK
-        # =========================
-        elif "is this true" in q_lower:
-            statement_match = re.search(r"'([^']+)'", q)
+            # transitive larger
+            elif "is larger than" in q_lower:
+                comparisons = re.findall(r"(\w+) is larger than (\w+)", q_lower)
+                mapping = {a: b for a, b in comparisons}
 
-            if statement_match:
-                statement = statement_match.group(1).lower()
-                answer = "no" if "all" in statement else "yes"
-            else:
-                answer = "unknown"
+                q_match = re.search(r"is (\w+) larger than (\w+)", q_lower)
+                if q_match:
+                    x, y = q_match.groups()
+                    cur = x
+                    answer = "no"
+
+                    while cur in mapping:
+                        if mapping[cur] == y:
+                            answer = "yes"
+                            break
+                        cur = mapping[cur]
 
         # =========================
-        # 🧩 RIDDLE (FALLBACK)
+        # 🌸 CLEAN BACKGROUND
         # =========================
-        else:
-            riddles = {
-                "speak without a mouth": "echo",
-                "has keys but can't open locks": "piano",
-                "runs but never walks": "water"
-            }
+        bg_clean = ""
+        if background:
+            bg_clean = re.sub(
+                r"^(Note:|Context:|Background:|Scene:|Setting:)\s*",
+                "",
+                background,
+                flags=re.IGNORECASE
+            ).strip()
 
-            answer = "idk"
+            bg_clean = re.sub(
+                r"(acknowledge.*|reference.*|include.*|mention.*|imagine)",
+                "",
+                bg_clean,
+                flags=re.IGNORECASE
+            ).strip()
+        # =========================
+        # 🎯 APPLY BG MODE
+        # =========================
+        if bg_clean and answer != "idk":
 
-            for k, v in riddles.items():
-                if k in q_lower:
-                    answer = v
-                    break
+            short = shorten_bg(bg_clean)
+
+            if bg_mode == "brief":
+                answer = f"{answer}. {short}"
+
+            elif bg_mode == "acknowledge":
+                answer = f"{answer}. There is {short.lower()}"
+
+            elif bg_mode == "respond":
+                answer = f"{answer}. The scene shows {short.lower()}"
+
+            # none → jangan tambah
 
         # =========================
-        # 🌸 CONTEXT WEAVING (SAFE)
+        # CLEAN FINAL
         # =========================
-        def clean_context(context):
-            context = context.strip()
-
-            context = re.sub(r"mention this in your answer\.?", "", context, flags=re.IGNORECASE)
-            context = re.sub(r"weave this into your response\.?", "", context, flags=re.IGNORECASE)
-
-            return context.strip()
-
-        if context:
-            context_clean = clean_context(context).split(".")[0]
-
-            # natural weaving (bukan tempel mentah)
-            answer = f"{answer}, like {context_clean}"
+        answer = re.sub(r"\s+", " ", answer).strip()
 
         return answer
 
     except Exception as e:
-        print("solver error:", e)
+        print("error:", e)
         return "idk"
+
+def is_safe_goal(rid, state):
+    pending_dz = {
+        r["id"] if isinstance(r, dict) else r
+        for r in (state.get("pendingDeathzones") or [])
+    }
+
+    mem = MAP_MEMORY.get(rid, {})
+    region_mem = REGION_MEMORY.get(rid, {})
+
+    if rid in pending_dz:
+        return False
+
+    if mem.get("isDeathZone") or region_mem.get("isDeathZone"):
+        return False
+
+    if mem.get("isMine") or region_mem.get("isMine"):
+        return False
+
+    return True
     
 def update_threat_map(state):
     global THREAT_MAP
 
     THREAT_MAP = {}  # 🔥 RESET
 
-    for a in state.get("visibleAgents", []):
+    for a in state.get("visibleAgents") or []:
         rid = a.get("regionId")
 
         if not is_teammate(a.get("name")):
@@ -285,51 +391,139 @@ def update_threat_map(state):
     for r in list(THREAT_MAP.keys()):
         THREAT_MAP[r] = THREAT_MAP[r]*0.95 + random.uniform(-1,1)
 
+def find_best_global_target(state):
+    me = state.get("self", {})
+    hp = me.get("hp", 100)
+    inventory = me.get("inventory", [])
+
+    best_region = None
+    best_score = -9999
+
+    for rid, data in MAP_MEMORY.items():
+
+        # ❌ skip deathzone / mine
+        if data.get("isDeathZone") or data.get("isMine"):
+            continue
+
+        # ❌ skip info terlalu lama (biar gak stale)
+        if state.get("turn", 0) - data.get("lastSeen", 0) > 50:
+            continue
+
+        score = 0
+
+        items = data.get("items", [])
+
+        for item in items:
+            name = (item.get("name") or "").lower()
+            category = item.get("category", "")
+
+            # 🔥 PRIORITY 1: MOLTZ
+            if item.get("type") == "currency" or "moltz" in name:
+                score += 2000
+
+            # 🔥 PRIORITY 2: WEAPON
+            if category == "weapon":
+                score += item.get("atkBonus", 0) * 80
+
+            # 🔥 PRIORITY 3: RECOVERY (kalau HP butuh)
+            if hp < 70 and category in ["healing", "consumable"]:
+                score += 600
+
+            # 🔥 PRIORITY 4: BINOCULARS
+            if "binocular" in name:
+                score += 300
+
+        # ❌ SKIP ITEM LIST (kecuali prioritas di atas)
+        if any((item.get("name") or "").lower() in SKIP_ITEMS for item in items):
+            score -= 200
+
+        # ⚠️ THREAT PENALTY
+        score -= THREAT_MAP.get(rid, 0)
+
+        # 🧭 DISTANCE BONUS (biar gak ngejar terlalu jauh)
+        score -= 5 * random.randint(0, 5)
+
+        if score > best_score:
+            best_score = score
+            best_region = rid
+
+    return best_region
+
 def choose_goal(state):
     global last_target_id
+
     me = state.get("self", {})
     hp = me.get("hp", 100)
 
     region = state.get("currentRegion", {})
     current = region.get("id")
 
-    if last_target_id:
-        for e in state.get("visibleAgents", []):
-            if e.get("id") == last_target_id:
-                return e.get("regionId")
+    visible_agents = state.get("visibleAgents", [])
 
-    # 🔴 LOW HP → cari aman
-    if hp < 40:
-        safe = memory_safe_regions(state)
+    # =========================
+    # 🔒 LOCK TARGET
+    # =========================
+    if last_target_id:
+        for e in visible_agents:
+            if e.get("id") == last_target_id:
+                return {"target": e.get("regionId"), "type": "attack"}
+
+    # =========================
+    # ☠️ PRIORITY 1: GUARDIAN
+    # =========================
+    guardians = [e for e in visible_agents if is_guardian(e)]
+    if guardians:
+        target = min(guardians, key=lambda x: x.get("hp", 999))
+        if is_safe_goal(target.get("regionId"), state):
+            return {"target": target.get("regionId"), "type": "attack"}
+
+    # =========================
+    # 🩸 PRIORITY 2: ESCAPE
+    # =========================
+    if hp < 31:
+        safe = [
+            r for r in memory_safe_regions(state)
+            if r not in [e.get("regionId") for e in visible_agents if not is_guardian(e)]
+        ]
         if safe:
-            return min(safe, key=lambda r: THREAT_MAP.get(r, 0))
-        
-    # ⚔️ cari musuh TERDEKAT
+            best = min(safe, key=lambda r: THREAT_MAP.get(r, 0))
+            return {"target": best, "type": "escape"}
+
+    # =========================
+    # ⚔️ PRIORITY 3: ENEMY
+    # =========================
     enemies = [
-        e for e in state.get("visibleAgents", [])
+        e for e in visible_agents
         if not is_teammate(e.get("name"))
+        and not is_guardian(e)
     ]
 
-    # 🧭 EXPLORE GLOBAL dari MAP MEMORY
+    if enemies and hp > 30:
+        target = min(enemies, key=lambda x: x.get("hp", 999))
+        if is_safe_goal(target.get("regionId"), state):
+            return {"target": target.get("regionId"), "type": "attack"}
+
+    # =========================
+    # 🌍 PRIORITY 4: GLOBAL LOOT
+    # =========================
+    target = find_best_global_target(state)
+    if target and is_safe_goal(target, state):
+        return {"target": target, "type": "loot"}
+
+    # =========================
+    # 🧭 PRIORITY 5: EXPLORE
+    # =========================
     unexplored = [
         rid for rid, data in MAP_MEMORY.items()
-        if not data.get("isDeathZone")
+        if state.get("turn", 0) - data.get("lastSeen", 0) > 15
+        and is_safe_goal(rid, state)
     ]
 
-    if enemies:
-        target = min(enemies, key=lambda x: x.get("hp", 999))
-
-        # hanya kalau cukup sehat
-        if hp > 30:
-            return target.get("regionId")
-
     if unexplored:
-        return min(
-            unexplored,
-            key=lambda r: THREAT_MAP.get(r, 0) + random.randint(0,20)
-        )
+        best = min(unexplored, key=lambda r: THREAT_MAP.get(r, 0))
+        return {"target": best, "type": "explore"}
 
-    return current
+    return {"target": current, "type": "idle"}
 
 def get_neighbors(region_id, state):
 
@@ -558,7 +752,7 @@ def safe_post(url, payload, retries=3):
             #log(f"[DEBUG] POST → {url}")
             #log(f"[DEBUG] PAYLOAD → {payload}")
 
-            r = session.post(url, json=payload, timeout=20)
+            r = session.post(url, json=payload, headers={"X-API-Key": API_KEY}, timeout=20)
             #log(f"[DEBUG] STATUS → {r.status_code}")
 
             if r.status_code >= 400:
@@ -661,8 +855,8 @@ def join_or_create():
             ]
 
             if free_games:
-                for game in free_games:
-                    print(f"🎮 Join FREE game: {game['name']}")
+                game = random.choice(free_games)  # 🔥 FIX
+                print(f"🎮 Join FREE game: {game['name']}")
             else:
                 game = None
         else:
@@ -859,67 +1053,44 @@ def is_killable(enemy, my_atk, my_hp):
 
 def smart_move(state, mode="normal"):
     global CURRENT_GOAL, GOAL_TURN
-    global LAST_MOVE, MOVE_COMMIT_TURN
     global last_regions, LAST_SAFE_REGION
 
     turn = state.get("turn", 0)
 
     region = state.get("currentRegion") or {}
-    current_id = region.get("id")
+    current = region.get("id")
     connections = normalize_connections(region.get("connections"))
 
     if not connections:
         return {"type": "rest"}
 
     # =========================
-    # 🔒 COMMIT MOVE
+    # 🧠 UPDATE GOAL (SINGLE SOURCE)
     # =========================
-    if LAST_MOVE and turn - MOVE_COMMIT_TURN < 3:
-        if LAST_MOVE in connections:
-            return {"type": "move", "regionId": LAST_MOVE}
-
-    # =========================
-    # 🎯 GOAL UPDATE
-    # =========================
-    if not CURRENT_GOAL or turn - GOAL_TURN > 8:
+    if not CURRENT_GOAL or turn - GOAL_TURN > 6:
         CURRENT_GOAL = choose_goal(state)
         GOAL_TURN = turn
 
-    # =========================
-    # 👤 SELF STATS
-    # =========================
-    me = state.get("self") or {}
-    my_hp = me.get("hp", 100)
-    my_atk = me.get("atk", 10)
+    goal_target = None
+    goal_type = "idle"
+
+    if isinstance(CURRENT_GOAL, dict):
+        goal_target = CURRENT_GOAL.get("target")
+        goal_type = CURRENT_GOAL.get("type")
+    else:
+        goal_target = CURRENT_GOAL
 
     # =========================
-    # 👥 ENEMY ANALYSIS
+    # 🧠 PATHFINDING
     # =========================
-    visible_agents = state.get("visibleAgents", []) or []
-
-    enemies = [
-        e for e in visible_agents
-        if not is_teammate(e.get("name"))
-    ]
-
-    enemy_regions = {}
-    killable_regions = set()
-    dangerous_regions = set()
-
-    for e in enemies:
-        rid = e.get("regionId")
-        if not rid:
-            continue
-
-        enemy_regions[rid] = e
-
-        if is_killable(e, my_atk, my_hp):
-            killable_regions.add(rid)
-        else:
-            dangerous_regions.add(rid)
+    next_step = None
+    if goal_target and goal_target != current:
+        path = astar(current, goal_target, state)
+        if path:
+            next_step = path[0]
 
     # =========================
-    # 🧭 VALID MOVES FILTER
+    # 🧭 VALID MOVES
     # =========================
     pending_dz = {
         r["id"] if isinstance(r, dict) else r
@@ -929,12 +1100,17 @@ def smart_move(state, mode="normal"):
     valid_moves = []
     for rid in connections:
         mem = REGION_MEMORY.get(rid, {})
+        map_mem = MAP_MEMORY.get(rid, {})
 
         if rid in pending_dz:
             continue
-        if mem.get("isDeathZone"):
+        if mem.get("isDeathZone") or mem.get("isMine"):
             continue
-        if mem.get("isMine"):
+
+        # hindari region minus vision
+        if str(map_mem.get("visionRequirement")).lower() == "minus":
+            continue
+        if map_mem.get("visionModifier") == "minus":
             continue
 
         valid_moves.append(rid)
@@ -943,130 +1119,106 @@ def smart_move(state, mode="normal"):
         return {"type": "rest"}
 
     # =========================
-    # 🚨 EMERGENCY
+    # 🧮 SCORING SYSTEM (GOAL-DRIVEN)
     # =========================
-    if my_hp < 30:
-        safe = memory_safe_regions(state)
-        if safe:
-            return {"type": "move", "regionId": random.choice(safe)}
-
-    # =========================
-    # 🧠 PATH
-    # =========================
-    next_step = None
-    if CURRENT_GOAL:
-        path = astar(current_id, CURRENT_GOAL, state)
-        if path:
-            next_step = path[0]
-
-    # =========================
-    # ⚖️ SCORING SYSTEM (NEW LOGIC)
-    # =========================
-    best_region = None
+    best = None
     best_score = -9999
 
-    #filtered_moves = []
-
-    #for rid in valid_moves:
-        #mem = MAP_MEMORY.get(rid, {})
-
-        #f mem.get("visionRequirement") == "minus":
-            #continue
-
-        #if mem.get("visionModifier") == "minus":
-            #continue
-
-        #filtered_moves.append(rid)
-
-    #valid_moves = filtered_moves
-    
     for rid in valid_moves:
         score = 0
 
-        mem = MAP_MEMORY.get(rid, {})
+        # =========================
+        # 🎯 CORE: FOLLOW GOAL
+        # =========================
+        if rid == next_step:
+            score += 800   # 🔥 sangat kuat (ini kunci elite)
+        elif goal_target:
+            score -= 80    # penalti kalau menjauh
 
-        if mem.get("visionModifier") == "minus":
-            score -= 500
-            continue
+        # =========================
+        # ⚠️ THREAT SYSTEM
+        # =========================
+        threat = THREAT_MAP.get(rid, 0)
 
-        # 💰 PRIORITY LOOT REGION (MOLTZ / ITEM IMPORTANT)
-        region_items = MAP_MEMORY.get(rid, {}).get("items", [])
+        score -= threat
 
-        for item in region_items:
-            name = (item.get("name") or "").lower()
+        if threat > 60:
+            score -= 400  # hard avoid
 
-            # 🔥 MOLTZ / CURRENCY PRIORITY HIGHEST
-            if item.get("type") == "currency" or "moltz" in name:
-                score += 900
+        # =========================
+        # 🩸 ESCAPE MODE BOOST
+        # =========================
+        if goal_type == "escape":
+            score -= threat * 2   # makin sensitif ke danger
 
-            # 💎 rare weapon priority
-            if item.get("category") == "weapon":
-                score += item.get("atkBonus", 0) * 50
+        # =========================
+        # ⚔️ ATTACK MODE BOOST
+        # =========================
+        if goal_type == "attack":
+            # kalau ada enemy di region itu → bonus
+            for e in state.get("visibleAgents", []):
+                if e.get("regionId") == rid and not is_teammate(e.get("name")):
+                    score += 250
 
-        if rid in enemy_regions:
-            hp = enemy_regions[rid].get("hp", 100)
-            score += max(0, 120 - hp)
-        
-        # 🎯 goal pressure
-        if next_step:
-            score += 300 if rid == next_step else -30
+        # =========================
+        # 💰 LOOT MODE BOOST
+        # =========================
+        if goal_type == "loot":
+            items = MAP_MEMORY.get(rid, {}).get("items", [])
 
-        # ⚠ base threat map
-        score -= THREAT_MAP.get(rid, 0)
+            for item in items:
+                name = (item.get("name") or "").lower()
 
-        # 👑 GUARDIAN GLOBAL THREAT (HIGHEST PRIORITY)
-        if any(is_guardian(e) and e.get("regionId") == rid for e in enemies):
-            score += 1000
+                if item.get("type") == "currency" or "moltz" in name:
+                    score += 500
 
-        # 👥 ENEMY LOGIC (NEW CORE)
-        if rid in dangerous_regions:
-            score -= 350   # hard avoid
-        elif rid in killable_regions:
-            score += 180   # reward kill opportunity
+                if item.get("category") == "weapon":
+                    score += item.get("atkBonus", 0) * 40
 
-        # 🔁 anti loop
-        if len(last_regions) >= 3 and rid == last_regions[-3]:
-            score -= 250
+        # =========================
+        # 🔁 ANTI LOOP
+        # =========================
+        if rid in last_regions[-3:]:
+            score -= 200
 
         if rid in last_regions:
-            score -= 80
+            score -= 60
 
-        # 🧭 exploration
+        # =========================
+        # 🧭 EXPLORATION BONUS
+        # =========================
         if rid not in MAP_MEMORY:
-            score += 40
+            score += 50
 
-        # 📉 high threat region
-        if THREAT_MAP.get(rid, 0) >= 60:
-            score -= 120
+        # =========================
+        # 💾 SAFE REGION TRACK
+        # =========================
+        if threat < 30:
+            LAST_SAFE_REGION = rid
 
+        # =========================
+        # 🏆 PICK BEST
+        # =========================
         if score > best_score:
             best_score = score
-            best_region = rid
+            best = rid
 
     # =========================
     # 🔄 FALLBACK SAFETY
     # =========================
-    if best_region and THREAT_MAP.get(best_region, 0) >= 60:
-        fallback = LAST_SAFE_REGION
-
-        if fallback and fallback in connections and fallback not in pending_dz:
-            best_region = fallback
+    if best and THREAT_MAP.get(best, 0) > 70:
+        if LAST_SAFE_REGION and LAST_SAFE_REGION in connections:
+            best = LAST_SAFE_REGION
 
     # =========================
-    # 💾 SAVE STATE
+    # 💾 SAVE HISTORY
     # =========================
-    if best_region:
-        if THREAT_MAP.get(best_region, 0) < 40:
-            LAST_SAFE_REGION = best_region
-
-        last_regions.append(best_region)
-        if len(last_regions) > MAX_LAST_REGIONS:
+    if best:
+        last_regions.append(best)
+        if len(last_regions) > 25:
             last_regions.pop(0)
 
-        LAST_MOVE = best_region
-        MOVE_COMMIT_TURN = turn
-
-        return {"type": "move", "regionId": best_region}
+        return {"type": "move", "regionId": best}
 
     return {"type": "rest"}
 
@@ -1511,6 +1663,26 @@ def send_finish_telegram(result, game_id, kills, deaths):
 
     except Exception as e:
         log(f"⚠ TG FINISH ERROR: {e}")
+
+# LAST_CURSE_RESULT = None
+
+# def check_curse_result(state):
+#     global LAST_CURSE_RESULT
+
+#     for log in state.get("recentLogs", []):
+#         msg = (log.get("message") or "").lower()
+
+#         if "curse activated" in msg and "wrong answer" in msg:
+#             if LAST_CURSE_RESULT != "wrong":
+#                 LAST_CURSE_RESULT = "wrong"
+#                 return "wrong"
+
+#         if "curse lifted" in msg or "correct answer" in msg:
+#             if LAST_CURSE_RESULT != "correct":
+#                 LAST_CURSE_RESULT = "correct"
+#                 return "correct"
+
+#     return None
 # ---------------- MAIN LOOP ----------------
 def agent_loop(game_id, agent_id):
     global LAST_ATTACK_TARGET, LAST_KILL_REGION
@@ -1622,49 +1794,21 @@ def agent_loop(game_id, agent_id):
 
             state = r_state.json().get("data")
 
+            if not state:
+                continue
+            # result = check_curse_result(state)
+
+            # if result == "wrong":
+            #     log("❌ CURSE ANSWER SALAH")
+            # elif result == "correct":
+            #     log("✅ CURSE ANSWER BENAR")
+
             current_agents = {
                 a["id"]: a for a in state.get("visibleAgents", [])
             }
             
             me = state.get("self", {})
-            # =========================
-            # 🧠 CURSE EDGE DETECTION (ANTI SPAM)
-            # =========================
-            curse = detect_curse(state, me.get("id"))
-
-            if curse:
-                now = time.time()
-
-                LAST_CURSE_TIME = globals().get("LAST_CURSE_TIME", 0)
-                LAST_CURSE_ID = globals().get("LAST_CURSE_ID")
-                CURSE_COOLDOWN = globals().get("CURSE_COOLDOWN", 3)
-
-                # 🔥 hanya proses kalau curse BARU
-                if curse["id"] != LAST_CURSE_ID and now - LAST_CURSE_TIME >= CURSE_COOLDOWN:
-
-                    globals()["LAST_CURSE_TIME"] = now
-                    globals()["LAST_CURSE_ID"] = curse["id"]
-
-                    log(f"💀 CURSE RECEIVED → {curse['question']}")
-
-                    answer = solve_curse(curse["question"])
-
-                    safe_post(
-                        f"{BASE_URL}/games/{game_id}/agents/{agent_id}/action",
-                        {
-                            "action": {
-                                "type": "whisper",
-                                "targetId": curse["senderId"],
-                                "message": answer
-                            }
-                        }
-                    )
-
-                    log(f"✅ CURSE ANSWER SENT → {answer}")
-
-                    # 🚨 PENTING: STOP LOOP STEP SELANJUTNYA
-                    continue
-
+            
             if state:
                 LAST_STATE = state
 
@@ -1718,7 +1862,7 @@ def agent_loop(game_id, agent_id):
             for item in visible_items:
                         
                 if inventory_count >= 10:
-                    log("Inventory penuh")
+                    #log("Inventory penuh")
                     break
 
                 name = (item.get("name") or "").lower()
@@ -1726,7 +1870,7 @@ def agent_loop(game_id, agent_id):
 
                 # ❌ SKIP ITEM
                 if name in SKIP_ITEMS or desc in SKIP_ITEMS:
-                    log(f"🚫 SKIP ITEM → {name}")
+                    #log(f"🚫 SKIP ITEM → {name}")
                     continue
 
                 name = item.get("name","")
@@ -1734,12 +1878,12 @@ def agent_loop(game_id, agent_id):
 
                 # skip duplicate weapon
                 if category == "weapon" and already_have_weapon(inventory, name):
-                    log(f"Skip duplicate weapon {name}")
+                    #log(f"Skip duplicate weapon {name}")
                     continue
 
                 # skip duplicate utility
                 if category == "utility" and any(i.get("name")==name for i in inventory):
-                    log(f"Skip duplicate utility {name}")
+                    #log(f"Skip duplicate utility {name}")
                     continue
 
                 res_pick = safe_post(
@@ -1812,7 +1956,43 @@ def agent_loop(game_id, agent_id):
                 last_turn_time = time.time()
                 log(f"🔥 TURN {current_turn} EXECUTE")
 
-    
+                # =========================
+                # 🧠 CURSE EDGE DETECTION (ANTI SPAM)
+                # =========================
+                curse = detect_curse(state, me.get("id"))
+
+                if curse:
+                    now = time.time()
+
+                    global LAST_CURSE_ID
+                    global LAST_CURSE_TIME
+                    LAST_CURSE_TIME = globals().get("LAST_CURSE_TIME", 0)
+                    CURSE_COOLDOWN = globals().get("CURSE_COOLDOWN", 3)
+
+                    # 🔥 hanya proses kalau curse BARU
+                    if curse["id"] != LAST_CURSE_ID and now - LAST_CURSE_TIME >= CURSE_COOLDOWN:
+                        LAST_CURSE_TIME = now
+
+                        globals()["LAST_CURSE_TIME"] = now
+                        globals()["LAST_CURSE_ID"] = curse["id"]
+
+                        log(f"💀 CURSE RECEIVED → {curse['question']}")
+
+                        answer = solve_curse(curse["question"])
+
+                        safe_post(
+                            
+                            f"{BASE_URL}/games/{game_id}/agents/{agent_id}/action",
+                            {
+                                "action": {
+                                    "type": "whisper",
+                                    "targetId": curse["senderId"],
+                                    "message": answer
+                                }
+                            }
+                        )
+                        log(f"✅ CURSE ANSWER SENT → {answer}")
+                        # 🚨 PENTING: STOP LOOP STEP SELANJUTNYA
 
                 # =========================
                 # AUTO EQUIP TERBAIK (WAITING MODE)
@@ -1842,9 +2022,7 @@ def agent_loop(game_id, agent_id):
 
                         if res_equip.status_code in [200, 201, 202]:
                             log(f"🗡️ WAITING EQUIP → {best_weapon['name']}")
-                            time.sleep(0.3)
-                            continue
-                continue        
+                            time.sleep(0.3)      
 
             # cek apakah agent boleh bertindak
             can_act = state.get("canAct")
@@ -1864,6 +2042,8 @@ def agent_loop(game_id, agent_id):
                     f"{BASE_URL}/games/{game_id}/agents/{agent_id}/action",
                     {"action": main_action}
                 )
+                if not main_action or "type" not in main_action:
+                    continue
 
                 if res_action:
 
