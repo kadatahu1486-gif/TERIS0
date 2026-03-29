@@ -156,6 +156,7 @@ def detect_curse(state, my_id):
 # 🌸 CLEAN BACKGROUND
 # =========================
 def clean_bg(text):
+    # hapus prefix
     text = re.sub(
         r"^(note:|context:|background:|scene:|setting:)\s*",
         "",
@@ -163,6 +164,15 @@ def clean_bg(text):
         flags=re.IGNORECASE
     ).strip()
 
+    # 🔥 hapus instruksi guardian
+    text = re.sub(
+        r"\b(acknowledge|mention|include|reference|respond|react|weave)\b.*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    ).strip()
+
+    # 🔥 hapus "in your answer" dll
     text = re.sub(
         r"\b(in your answer|in your reply)\b.*",
         "",
@@ -170,7 +180,9 @@ def clean_bg(text):
         flags=re.IGNORECASE
     ).strip()
 
+    # rapikan spasi
     text = re.sub(r"\s+", " ", text)
+
     return text
 
 
