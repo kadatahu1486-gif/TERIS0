@@ -152,6 +152,20 @@ def detect_curse(state, my_id):
         "senderId": latest_curse.get("senderId")
     }
 
+def shorten_bg(text):
+    text = text.lower()
+
+    text = re.sub(r"\b(there is|imagine)\b", "", text)
+    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing)\b", "", text)
+    text = re.sub(r"\bin the background\b", "", text)
+
+    text = re.sub(r"\s+", " ", text).strip()
+
+    words = text.split()
+    core = " ".join(words[:3])
+
+    return core.capitalize()
+
 # =========================
 # 🌸 CLEAN BACKGROUND
 # =========================
@@ -216,17 +230,22 @@ def apply_style(answer, bg, style):
     if not bg:
         return answer
 
-    # universal base (aman)
-    if style in ["mention", "include", "reference", "weave", "default"]:
-        return f"{answer}. {bg}"
+    short = shorten_bg(bg)
+
+    # math / number → jangan pakai there is / scene shows
+    if answer.replace(".", "").isdigit():
+        return f"{answer}. {short}"
+
+    if style in ["mention", "include", "reference", "weave"]:
+        return f"{answer}. {short}"
 
     elif style == "acknowledge":
-        return f"{answer}. {bg}"
+        return f"{answer}. {short}"  # gunakan short bg langsung
 
     elif style == "respond":
-        return f"{answer}. {bg}"
+        return f"{answer}. The scene shows {short.lower()}"
 
-    return f"{answer}. {bg}"
+    return answer
 
 
 # =========================
@@ -261,7 +280,8 @@ def solve_logic(q):
     expr = expr.replace("times", "*").replace("multiplied by", "*")
     expr = expr.replace("divided by", "/")
     expr = expr.replace("×", "*").replace("÷", "/")
-
+    expr = expr.replace(" x ", "*")
+    
     math_match = re.search(r'(\d+\s*[\+\-\*/]\s*\d+)', expr)
     if math_match:
         try:
@@ -271,6 +291,12 @@ def solve_logic(q):
             return str(result)
         except:
             pass
+    # COUNT UPPERCASE
+    upper_match = re.search(r"how many uppercase letters are in '([^']+)'", q_lower)
+    if upper_match:
+        txt = upper_match.group(1)
+        return str(sum(1 for c in txt if c.isupper()))
+
     # COUNT LETTERS
     letters_match = re.search(r"how many letters are in (?:the word )?'([^']+)'", q_lower)
     if letters_match:
