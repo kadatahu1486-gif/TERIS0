@@ -360,6 +360,14 @@ def solve_logic(q):
 
         return "no"
 
+    # =========================
+    # SPELL / BACKWARDS
+    # =========================
+    spell_match = re.search(r"spell '([^']+)' backwards", q_lower)
+    if spell_match:
+        word = spell_match.group(1)
+        return word[::-1]  # balik string
+    
     return "idk"
 
 
