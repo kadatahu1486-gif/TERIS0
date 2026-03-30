@@ -173,19 +173,19 @@ def clean_bg(text):
 # =========================
 # 🔹 SHORTEN BACKGROUND
 # =========================
-def shorten_bg(text, style="default"):
-    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming)\b", "", text, flags=re.IGNORECASE)
+def shorten_bg(text):
+    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming|fading|weaving)\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\bin the background\b", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\b(is|was|were|are|seen)\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^there is\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+
     words = text.split()
 
-    if style in ["mention", "include", "reference", "respond"]:
-        core = " ".join(words[:3])
-    else:
-        core = " ".join(words)  # full bg untuk weave / acknowledge
+    # 🔥 ambil maksimal 3 kata pertama
+    core = " ".join(words[:3])
 
-    return core.capitalize()
+    return core.lower()
 
 # =========================
 # 🔹 DETECT QUESTION TYPE
@@ -216,21 +216,12 @@ def apply_style(answer, bg, style, question=""):
         return answer
 
     full = bg.strip()
-    short = shorten_bg(bg, style)
+    short = shorten_bg(bg)
     q_type = detect_question_type(question)
 
     style_map = {
 
         "weave": {
-            "math": "full_there", #bener
-            "count": "full_there",
-            "logic": "full_there",
-            "abc": "short_natural",
-            "string": "full_there",
-            "default": "full_there"
-        },
-
-        "acknowledge": {
             "math": "full_there",
             "count": "full_there",
             "logic": "full_there",
@@ -239,8 +230,17 @@ def apply_style(answer, bg, style, question=""):
             "default": "full_there"
         },
 
+        "acknowledge": {
+            "math": "full", #benar
+            "count": "full_there",
+            "logic": "full_there",
+            "abc": "short_natural",
+            "string": "full_there",
+            "default": "full_there"
+        },
+
         "mention": {
-            "math": "short_natural", #bener
+            "math": "short_natural", #benar
             "count": "short_natural",
             "logic": "short_natural",
             "abc": "short_natural",
@@ -344,9 +344,9 @@ def solve_logic(q):
             pass
     # COUNT UPPERCASE
     # simpan q asli untuk count uppercase
-    upper_match = re.search(r"how many uppercase letters are in '([^']+)'", q)
+    upper_match = re.search(r"uppercase letters.*?'([^']+)'", q_lower)
     if upper_match:
-        txt = upper_match.group(1)  # gunakan q asli
+        txt = re.search(r"'([^']+)'", q).group(1)
         return str(sum(1 for c in txt if c.isupper()))
 
     # COUNT LETTERS
