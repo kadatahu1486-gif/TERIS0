@@ -192,20 +192,40 @@ def shorten_bg(text):
 # =========================
 def detect_question_type(q):
     q_lower = q.lower()
-    if re.search(r"\bwhat is\b|\d+\s*[\+\-\*/x×÷]\s*\d+", q_lower):
-        return "math"
-    if "how many" in q_lower:
-        return "count"
+
+    # =========================
+    # TRANSITIVE (🔥 DIPISAH)
+    # =========================
+    if "is larger than" in q_lower:
+        return "logic_transitive"
+
+    # =========================
+    # LOGIC LAIN
+    # =========================
+    if "is this true" in q_lower:
+        return "logic"
+
     if "contradiction" in q_lower or "paradox" in q_lower:
         return "logic"
-    if re.search(r"\bif\b.*\bdo i\b", q_lower):
-        return "abc"
+
+    if re.search(r"all .* are .*|.* is a .*", q_lower):
+        return "logic"
+
+    # =========================
+    # LAINNYA
+    # =========================
+    if re.search(r"\bwhat is\b|\d+\s*[\+\-\*/x×÷]\s*\d+", q_lower):
+        return "math"
+
     if "uppercase" in q_lower or "letters" in q_lower:
         return "count"
+
+    if "how many" in q_lower:
+        return "count"
+
     if "spell" in q_lower and "backwards" in q_lower:
         return "string"
-    if re.search(r"is larger than|all .* are .*|.* is a .*", q_lower):
-        return "logic"
+
     return "default"
 
 # =========================
@@ -222,7 +242,7 @@ def apply_style(answer, bg, style, question=""):
     style_map = {
 
         "weave": {
-            "math": "full_there",
+            "math": "full_there", #benar
             "count": "full_there",
             "logic": "full_there",
             "abc": "short_natural",
@@ -231,9 +251,9 @@ def apply_style(answer, bg, style, question=""):
         },
 
         "acknowledge": {
-            "math": "full", #benar
+            "math": "short_natural", #benar
             "count": "full_there",
-            "logic": "full_there",
+            "logic": "full", #fly test
             "abc": "short_natural",
             "string": "full_there",
             "default": "full_there"
@@ -241,7 +261,7 @@ def apply_style(answer, bg, style, question=""):
 
         "mention": {
             "math": "short_natural", #benar
-            "count": "short_natural",
+            "count": "short_natural", #letter benar
             "logic": "short_natural",
             "abc": "short_natural",
             "string": "short_natural",
@@ -249,14 +269,14 @@ def apply_style(answer, bg, style, question=""):
         },
 
         "include": {
-            "math": "short_natural",
-            "count": "short_natural",
-            "logic": "short_natural",
+            "math": "short_natural", #test
+            "count": "scene_short",
+            "logic": "scene_short",
             "default": "auto"
         },
 
         "reference": {
-            "math": "short_natural",
+            "math": "short_natural", #benar
             "count": "short_natural",
             "logic": "short_natural", #salah
             "string": "full", #bener
