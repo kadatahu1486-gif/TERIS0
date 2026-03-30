@@ -159,20 +159,6 @@ def detect_curse(state, my_id):
         "senderId": latest_curse.get("senderId")
     }
 
-def shorten_bg(text, style="default"):
-    text = text.lower()
-    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming)\b", "", text)
-    text = re.sub(r"\bin the background\b", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    words = text.split()
-    
-    if style in ["mention", "include", "reference", "respond"]:
-        core = " ".join(words[:3])
-    else:
-        core = " ".join(words)  # full bg untuk weave / acknowledge
-
-    return core.capitalize()
-
 # =========================
 # 🌸 CLEAN BACKGROUND
 # =========================
@@ -185,64 +171,124 @@ def clean_bg(text):
     return text
 
 # =========================
-# 🎭 STYLE DETECTOR (MUDAH TAMBAH RULE)
+# 🔹 SHORTEN BACKGROUND
 # =========================
-def detect_style(full_text):
-    t = full_text.lower()
+def shorten_bg(text, style="default"):
+    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming)\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bin the background\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    words = text.split()
 
-    style_rules = {
-        "acknowledge": [
-            "acknowledge this in your answer",
-            "include a brief mention of this"   # 🔥 PINDAH KE SINI
-        ],
-        "mention": [
-            "mention this in your answer",
-            "reference this scene in your reply"
-        ],
-        "weave": [
-            "weave this into your response"
-        ],
-        "respond": [
-            "respond to this scene",
-            "react to this scene"
-        ]
-    }
+    if style in ["mention", "include", "reference", "respond"]:
+        core = " ".join(words[:3])
+    else:
+        core = " ".join(words)  # full bg untuk weave / acknowledge
 
-    for style, keywords in style_rules.items():
-        for kw in keywords:
-            if kw in t:
-                return style
+    return core.capitalize()
 
+# =========================
+# 🔹 DETECT QUESTION TYPE
+# =========================
+def detect_question_type(q):
+    q_lower = q.lower()
+    if re.search(r"\bwhat is\b|\d+\s*[\+\-\*/x×÷]\s*\d+", q_lower):
+        return "math"
+    if "how many" in q_lower:
+        return "count"
+    if "contradiction" in q_lower or "paradox" in q_lower:
+        return "logic"
+    if re.search(r"\bif\b.*\bdo i\b", q_lower):
+        return "logic"
+    if "uppercase" in q_lower or "letters" in q_lower:
+        return "count"
+    if "spell" in q_lower and "backwards" in q_lower:
+        return "string"
+    if re.search(r"is larger than|all .* are .*|.* is a .*", q_lower):
+        return "logic"
     return "default"
 
-
 # =========================
-# 🎯 STYLE FORMATTER
+# 🔹 APPLY STYLE
 # =========================
-def apply_style(answer, bg, style, question=None):
+def apply_style(answer, bg, style, question=""):
     if not bg:
         return answer
 
     full = bg.strip()
     short = shorten_bg(bg, style)
+    q_type = detect_question_type(question)
 
-    if style in ["weave", "acknowledge"]:
-        if full.lower().startswith("there is"):
+    style_map = {
+
+        "weave": {
+            "math": "full_there",
+            "count": "full_there",
+            "logic": "full_there",
+            "string": "full_there",
+            "default": "full_there"
+        },
+
+        "acknowledge": {
+            "math": "full_there",
+            "count": "full_there",
+            "logic": "full_there",
+            "string": "full_there",
+            "default": "full_there"
+        },
+
+        "mention": {
+            "math": "short_natural",
+            "count": "short_natural",
+            "logic": "short_natural",
+            "string": "short_natural",
+            "default": "auto"
+        },
+
+        "include": {
+            "math": "short_natural",
+            "count": "short_natural",
+            "logic": "short_natural",
+            "default": "auto"
+        },
+
+        "reference": {
+            "math": "short_natural",
+            "count": "short_natural",
+            "logic": "short_natural",
+            "default": "auto"
+        },
+
+        "respond": {
+            "default": "scene_short"
+        }
+    }
+
+    rule = style_map.get(style, {}).get(q_type, "auto")
+
+    if rule == "full_there":
+        if re.match(r"^(there is|a|an|the)\b", full.lower()):
             return f"{answer}. {full}"
         else:
-            return f"{answer}. There is {full}"
+            return f"{answer}. there is {full}"
 
-    elif style == "respond":
+    elif rule == "full":
+        return f"{answer}. {full}"
+
+    elif rule == "short":
+        return f"{answer}. {short}"
+
+    elif rule == "short_natural":
+        # ambil 1-3 kata pertama, kapital natural, tanpa "there is"
+        return f"{answer}. {short.capitalize()}"
+
+    elif rule == "scene_short":
         return f"{answer}. The scene shows {short}"
 
-    elif style in ["mention", "include", "reference"]:
-        if question and re.search(r"\b(math|what is|how many|uppercase|letters|contradiction|paradox|if|do i)\b", question.lower()):
-            return f"{answer}. {short}"  # pakai short bg untuk soal ini
+    elif rule == "auto":
+        if len(bg.split()) > 6:
+            return f"{answer}. {full}"
         else:
-            if len(bg.split()) > 6 or re.search(r"\b(is|was|were|are|seen|floating|rising|echoing|falling|soaring|shining|humming)\b", bg, re.IGNORECASE):
-                return f"{answer}. {full}"
-            else:
-                return f"{answer}. {short}"
+            return f"{answer}. {short}"
 
     return answer
 
@@ -359,7 +405,6 @@ def solve_logic(q):
                 cur = mapping[cur]
 
         return "no"
-
     # =========================
     # SPELL / BACKWARDS
     # =========================
@@ -418,7 +463,7 @@ def solve_curse(question):
         # =========================
         # STYLE
         # =========================
-        style = detect_style(question)
+        style = detect_question_type(q)
 
         # =========================
         # CLEAN BG
