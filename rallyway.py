@@ -67,7 +67,14 @@ STATE_TIMEOUT = 60
 last_state_update = time.time()
 WITA = timezone(timedelta(hours=8))
 MAX_LAST_REGIONS = 30
-TEAM_PREFIXES = ("ForTres", "SEKAI", "GORIS", "GLORIES", "TERIS", "LOSTV", "IMOAIX", "LBXES", "TSAL", "NEEST", "LOOBS", "ENOZ", "NOIGER", "BOBRIO")
+TEAM_PREFIXES = ("ForTres", "SEKAI", "GORIS", "GLORIES",
+                "TERIS", "LOSTV", "IMOAIX", "LBXES", "TSAL",
+                "NEEST", "LOOBS", "ENOZ", "NOIGER", "BOBRIO", #sampai sini
+                "AADS", "MOLTZ", "MOLTY", "MOLT", "ZETA", "OMEGA", "ALPHA",
+                "BETA", "GAMMA", "DELTA", "EPSILON", "ZETTA", "THETA",
+                "IOTA", "KAPPA", "LAMBDA", "MU", "NU", "XI", "OMICRON",
+                "PI", "RHO", "SIGMA", "TAU", "UPSILON", "PHI", "CHI",
+                "PSI", "OMEGA", "FORCE", "VORTEX", "NOVA", "ECLIPSE")
 
 def is_teammate(name):
     if not name:
@@ -152,17 +159,17 @@ def detect_curse(state, my_id):
         "senderId": latest_curse.get("senderId")
     }
 
-def shorten_bg(text):
+def shorten_bg(text, style="default"):
     text = text.lower()
-
-    text = re.sub(r"\b(there is|imagine)\b", "", text)
-    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing)\b", "", text)
+    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming)\b", "", text)
     text = re.sub(r"\bin the background\b", "", text)
-
     text = re.sub(r"\s+", " ", text).strip()
-
     words = text.split()
-    core = " ".join(words[:3])
+    
+    if style in ["mention", "include", "reference", "respond"]:
+        core = " ".join(words[:3])
+    else:
+        core = " ".join(words)  # full bg untuk weave / acknowledge
 
     return core.capitalize()
 
@@ -170,35 +177,12 @@ def shorten_bg(text):
 # 🌸 CLEAN BACKGROUND
 # =========================
 def clean_bg(text):
-    # hapus prefix
-    text = re.sub(
-        r"^(note:|context:|background:|scene:|setting:)\s*",
-        "",
-        text,
-        flags=re.IGNORECASE
-    ).strip()
-
-    # 🔥 hapus instruksi guardian
-    text = re.sub(
-        r"\b(acknowledge|mention|include|reference|respond|react|weave)\b.*",
-        "",
-        text,
-        flags=re.IGNORECASE
-    ).strip()
-
-    # 🔥 hapus "in your answer" dll
-    text = re.sub(
-        r"\b(in your answer|in your reply)\b.*",
-        "",
-        text,
-        flags=re.IGNORECASE
-    ).strip()
-
-    # rapikan spasi
+    text = re.sub(r"^(note:|context:|background:|scene:|setting:)\s*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\b(picture|imagine)\b\s*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\b(acknowledge|mention|include|reference|respond|react|weave)\b.*", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"\b(in your answer|in your reply)\b.*", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(r"\s+", " ", text)
-
     return text
-
 
 # =========================
 # 🎭 STYLE DETECTOR (MUDAH TAMBAH RULE)
@@ -206,16 +190,25 @@ def clean_bg(text):
 def detect_style(full_text):
     t = full_text.lower()
 
-    style_rules = [
-        ("weave", ["weave"]),
-        ("mention", ["mention"]),
-        ("include", ["include"]),
-        ("acknowledge", ["acknowledge"]),
-        ("reference", ["reference"]),
-        ("respond", ["respond", "react"]),
-    ]
+    style_rules = {
+        "acknowledge": [
+            "acknowledge this in your answer",
+            "include a brief mention of this"   # 🔥 PINDAH KE SINI
+        ],
+        "mention": [
+            "mention this in your answer",
+            "reference this scene in your reply"
+        ],
+        "weave": [
+            "weave this into your response"
+        ],
+        "respond": [
+            "respond to this scene",
+            "react to this scene"
+        ]
+    }
 
-    for style, keywords in style_rules:
+    for style, keywords in style_rules.items():
         for kw in keywords:
             if kw in t:
                 return style
@@ -226,27 +219,32 @@ def detect_style(full_text):
 # =========================
 # 🎯 STYLE FORMATTER
 # =========================
-def apply_style(answer, bg, style):
+def apply_style(answer, bg, style, question=None):
     if not bg:
         return answer
 
-    short = shorten_bg(bg)
+    full = bg.strip()
+    short = shorten_bg(bg, style)
 
-    # math / number → jangan pakai there is / scene shows
-    if answer.replace(".", "").isdigit():
-        return f"{answer}. {short}"
-
-    if style in ["mention", "include", "reference", "weave"]:
-        return f"{answer}. {short}"
-
-    elif style == "acknowledge":
-        return f"{answer}. {short}"  # gunakan short bg langsung
+    if style in ["weave", "acknowledge"]:
+        if full.lower().startswith("there is"):
+            return f"{answer}. {full}"
+        else:
+            return f"{answer}. There is {full}"
 
     elif style == "respond":
-        return f"{answer}. The scene shows {short.lower()}"
+        return f"{answer}. The scene shows {short}"
+
+    elif style in ["mention", "include", "reference"]:
+        if question and re.search(r"\b(math|what is|how many|uppercase|letters|contradiction|paradox|if|do i)\b", question.lower()):
+            return f"{answer}. {short}"  # pakai short bg untuk soal ini
+        else:
+            if len(bg.split()) > 6 or re.search(r"\b(is|was|were|are|seen|floating|rising|echoing|falling|soaring|shining|humming)\b", bg, re.IGNORECASE):
+                return f"{answer}. {full}"
+            else:
+                return f"{answer}. {short}"
 
     return answer
-
 
 # =========================
 # 🧠 SOLVER CORE
@@ -259,7 +257,9 @@ def solve_logic(q):
     if "contradiction" in q_lower or "paradox" in q_lower:
         match = re.search(r"'([^']+)'", q)
         if match:
-            clauses = [c.strip() for c in match.group(1).split(",")]
+            parts = match.group(1).split(",")
+            clauses = [p.strip() for p in parts if p.strip()]
+
             if len(clauses) >= 2:
                 return f"{clauses[0]} contradicts {clauses[1]}"
         return "the statements contradict each other"
@@ -292,9 +292,10 @@ def solve_logic(q):
         except:
             pass
     # COUNT UPPERCASE
-    upper_match = re.search(r"how many uppercase letters are in '([^']+)'", q_lower)
+    # simpan q asli untuk count uppercase
+    upper_match = re.search(r"how many uppercase letters are in '([^']+)'", q)
     if upper_match:
-        txt = upper_match.group(1)
+        txt = upper_match.group(1)  # gunakan q asli
         return str(sum(1 for c in txt if c.isupper()))
 
     # COUNT LETTERS
@@ -302,7 +303,36 @@ def solve_logic(q):
     if letters_match:
         txt = letters_match.group(1)
         return str(len(txt.replace(" ", "")))  # hapus spasi
+    
+    # =========================
+    # TRUE / FALSE STATEMENT
+    # =========================
+    truth_match = re.search(r"'([^']+)'[^a-zA-Z]*is this true", q_lower)
 
+    if truth_match:
+        statement = truth_match.group(1)
+
+        if "all birds can fly" in statement:
+            return "no"
+        elif "all fish can swim" in statement:
+            return "yes"
+
+        return "idk"
+    
+        # CONDITIONAL LOGIC
+    if "if" in q_lower and "do i" in q_lower:
+        cond = re.search(r"if (.*?), (.*?)\.", q_lower)
+        fact = re.findall(r"\.\s*([^\.]+)\.", q_lower)
+
+        if cond and len(fact) >= 1:
+            condition = cond.group(1).strip()
+            conclusion = cond.group(2).strip()
+            statement = fact[0].strip()
+
+            if condition in statement or statement in condition:
+                return "yes"
+            return "no"
+        
     # SYLLOGISM
     match_all = re.search(r"all (\w+) are (\w+)", q_lower)
     match_is = re.search(r"(\w+) is a (\w+)", q_lower)
@@ -391,7 +421,7 @@ def solve_curse(question):
         # APPLY STYLE
         # =========================
         if answer != "idk" and bg:
-            answer = apply_style(answer, bg, style)
+            answer = apply_style(answer, bg, style, question=q)
 
         # =========================
         # FINAL CLEAN
