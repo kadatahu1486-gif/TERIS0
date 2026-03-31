@@ -289,11 +289,11 @@ def apply_style(answer, bg, style, question=""):
 
         "include": {
             "math": "short_natural", #test
-            "count": "scene_short",
+            "count": "short_natural", #what is the number 7? benar short_natural
             "logic_conditional": "short_natural", #scene_short salah
             "logic_transitive": "short_natural",
             "logic": "full", #scene_short salah
-            "default": "short_natural"
+            "default": "auto"
         },
 
         "reference": {
@@ -312,30 +312,46 @@ def apply_style(answer, bg, style, question=""):
 
     rule = style_map.get(style, {}).get(q_type, "auto")
 
+    # =========================
+    # FULL_THERE
+    # =========================
     if rule == "full_there":
-        if re.match(r"^(there is|an|the)\b", full.lower()):
+        first_word = full.split()[0].lower() if full.split() else ""
+        if first_word in ["there", "an", "the"]:
             return f"{answer}. {full}"
         else:
             return f"{answer}. there is {full}"
 
+    # =========================
+    # FULL
+    # =========================
     elif rule == "full":
         return f"{answer}. {full}"
 
-    elif rule == "short":
-        return f"{answer}. {short}"
-
+    # =========================
+    # SHORT_NATURAL
+    # =========================
     elif rule == "short_natural":
-        # ambil 1-3 kata pertama, kapital natural, tanpa "there is"
-        return f"{answer}. {short.capitalize()}"
+        # Hilangkan kata 'there' & kata sifat yang sering menempel
+        short_clean = " ".join([w for w in short.split() if w.lower() != "there"])
+        # Ambil maksimal 3 kata
+        short_clean = " ".join(short_clean.split()[:3]).capitalize()
+        return f"{answer}. {short_clean}"
 
+    # =========================
+    # SCENE_SHORT
+    # =========================
     elif rule == "scene_short":
-        return f"{answer}. The scene shows {short}"
+        return f"{answer}. The scene shows {short.capitalize()}"
 
+    # =========================
+    # AUTO fallback
+    # =========================
     elif rule == "auto":
         if len(bg.split()) > 6:
             return f"{answer}. {full}"
         else:
-            return f"{answer}. {short}"
+            return f"{answer}. {short.capitalize()}"
 
     return answer
 
@@ -547,6 +563,7 @@ def solve_curse(question):
     except Exception as e:
         print("error:", e)
         return "idk"
+        
 def is_safe_goal(rid, state):
     pending_dz = {
         r["id"] if isinstance(r, dict) else r
