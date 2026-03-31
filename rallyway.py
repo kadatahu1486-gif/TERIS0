@@ -272,7 +272,7 @@ def apply_style(answer, bg, style, question=""):
             "logic_transitive": "short_natural",
             "bird": "short_natural", #bener
             "contradiksi": "full", #short_natural salah
-            "logic": "full", 
+            "logic": "full",  #full_there salah
             "abc": "short_natural",
             "string": "full_there",
             "default": "full_there"
@@ -282,17 +282,17 @@ def apply_style(answer, bg, style, question=""):
             "math": "short_natural", #benar
             "count": "short_natural", #letter benar
             "logic_transitive": "short_natural", #A is larger than B. B is larger than C.' Is A larger than C?  benar
-            "logic": "full_there", #test
+            "logic": "full", #full_there salah
             "string": "short_natural",
             "default": "auto"
         },
 
         "include": {
-            "math": "short_natural", #test
+            "math": "short_natural", #short_natural test full_there salah
             "count": "short_natural", #what is the number 7? benar short_natural
             "logic_conditional": "short_natural", #scene_short salah
             "logic_transitive": "short_natural",
-            "logic": "full", #scene_short salah
+            "logic": "full", #scene_short salah short_natural salah
             "default": "auto"
         },
 
@@ -300,7 +300,7 @@ def apply_style(answer, bg, style, question=""):
             "math": "short_natural", #benar
             "count": "short_natural",
             "logic_transitive": "short_natural", #full_there salah
-            "logic": "short_natural", #full salah
+            "logic": "full_there", #full salah short_natural salah
             "string": "full", #bener
             "default": "auto"
         },
