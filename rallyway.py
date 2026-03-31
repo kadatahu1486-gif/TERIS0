@@ -244,6 +244,7 @@ def apply_style(answer, bg, style, question=""):
         "weave": {
             "math": "full_there", #benar
             "count": "full_there",
+            "logic_transitive": "full_there",
             "logic": "full_there",
             "abc": "short_natural",
             "string": "full_there",
@@ -252,8 +253,9 @@ def apply_style(answer, bg, style, question=""):
 
         "acknowledge": {
             "math": "short_natural", #benar
-            "count": "full_there",
-            "logic": "full", #fly test
+            "count": "short_natural", #Hallo World Bye full_there salah
+            "logic_transitive": "short_natural",
+            "logic": "short_natural", 
             "abc": "short_natural",
             "string": "full_there",
             "default": "full_there"
@@ -262,8 +264,8 @@ def apply_style(answer, bg, style, question=""):
         "mention": {
             "math": "short_natural", #benar
             "count": "short_natural", #letter benar
-            "logic": "short_natural",
-            "abc": "short_natural",
+            "logic_transitive": "short_natural", #A is larger than B. B is larger than C.' Is A larger than C?  benar
+            "logic": "full_there", #test
             "string": "short_natural",
             "default": "auto"
         },
@@ -278,7 +280,8 @@ def apply_style(answer, bg, style, question=""):
         "reference": {
             "math": "short_natural", #benar
             "count": "short_natural",
-            "logic": "short_natural", #salah
+            "logic_transitive": "short_natural", #full_there salah
+            "logic": "short_natural", #full salah
             "string": "full", #bener
             "default": "auto"
         },
