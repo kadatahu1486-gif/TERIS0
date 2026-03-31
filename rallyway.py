@@ -194,26 +194,41 @@ def detect_question_type(q):
     q_lower = q.lower()
 
     # =========================
-    # TRANSITIVE (🔥 DIPISAH)
+    # PRIORITAS TINGGI (🔥 JANGAN KETABRAK)
     # =========================
+
+    # CONDITIONAL (If ..., Do I ...)
+    if "if" in q_lower and "do i" in q_lower:
+        return "logic_conditional"
+
+    # TRANSITIVE
     if "is larger than" in q_lower:
         return "logic_transitive"
 
-    # =========================
-    # LOGIC LAIN
-    # =========================
+    # TRUE / FALSE STATEMENT
     if "is this true" in q_lower:
         return "logic"
 
+    # CONTRADICTION
     if "contradiction" in q_lower or "paradox" in q_lower:
-        return "logic"
-
-    if re.search(r"all .* are .*|.* is a .*", q_lower):
-        return "logic"
+        return "contradiksi"
 
     # =========================
-    # LAINNYA
+    # LOGIC STRUCTURE
     # =========================
+
+    # ALL ... ARE ...
+    if re.search(r"\ball .* are .*\b", q_lower):
+        return "bird"
+
+    # X IS A Y (lebih spesifik biar gak ganggu "it is raining")
+    if re.search(r"\b\w+ is a \w+\b", q_lower):
+        return "logic_is"
+
+    # =========================
+    # MATH / COUNT / STRING
+    # =========================
+
     if re.search(r"\bwhat is\b|\d+\s*[\+\-\*/x×÷]\s*\d+", q_lower):
         return "math"
 
@@ -255,7 +270,9 @@ def apply_style(answer, bg, style, question=""):
             "math": "short_natural", #benar
             "count": "short_natural", #Hallo World Bye full_there salah
             "logic_transitive": "short_natural",
-            "logic": "short_natural", 
+            "bird": "short_natural", #bener
+            "contradiksi": "full", #short_natural salah
+            "logic": "full", 
             "abc": "short_natural",
             "string": "full_there",
             "default": "full_there"
@@ -273,8 +290,10 @@ def apply_style(answer, bg, style, question=""):
         "include": {
             "math": "short_natural", #test
             "count": "scene_short",
-            "logic": "scene_short",
-            "default": "auto"
+            "logic_conditional": "short_natural", #scene_short salah
+            "logic_transitive": "short_natural",
+            "logic": "full", #scene_short salah
+            "default": "short_natural"
         },
 
         "reference": {
@@ -393,7 +412,7 @@ def solve_logic(q):
 
         return "idk"
     
-        # CONDITIONAL LOGIC
+    # CONDITIONAL LOGIC (FIXED)
     if "if" in q_lower and "do i" in q_lower:
         cond = re.search(r"if (.*?), (.*?)\.", q_lower)
         fact = re.findall(r"\.\s*([^\.]+)\.", q_lower)
@@ -403,8 +422,13 @@ def solve_logic(q):
             conclusion = cond.group(2).strip()
             statement = fact[0].strip()
 
-            if condition in statement or statement in condition:
+            # 🔥 NORMALISASI sederhana
+            def normalize(s):
+                return s.replace("is ", "").replace("are ", "").replace("ing", "").strip()
+
+            if normalize(condition) in normalize(statement):
                 return "yes"
+
             return "no"
         
     # SYLLOGISM
@@ -523,7 +547,6 @@ def solve_curse(question):
     except Exception as e:
         print("error:", e)
         return "idk"
-
 def is_safe_goal(rid, state):
     pending_dz = {
         r["id"] if isinstance(r, dict) else r
