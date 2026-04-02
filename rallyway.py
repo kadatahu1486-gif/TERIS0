@@ -251,7 +251,7 @@ def perfect_curse_answer(answer, background, question):
 
     # 🔥 ACKNOWLEDGE (biasanya full)
     elif style == "acknowledge":
-        return f"{answer}. {bg_clean}"
+        return f"{answer}. {core.capitalize()}"
 
     return f"{answer}. {core.capitalize()}"
 
@@ -1766,25 +1766,25 @@ def send_finish_telegram(result, game_id, kills, deaths):
     except Exception as e:
         log(f"⚠ TG FINISH ERROR: {e}")
 
-LAST_CURSE_RESULT = None
+# LAST_CURSE_RESULT = None
 
-def check_curse_result(state):
-    global LAST_CURSE_RESULT
+# def check_curse_result(state):
+#     global LAST_CURSE_RESULT
 
-    for log in state.get("recentLogs", []):
-        msg = (log.get("message") or "").lower()
+#     for log in state.get("recentLogs", []):
+#         msg = (log.get("message") or "").lower()
 
-        if "curse activated" in msg and "wrong answer" in msg:
-            if LAST_CURSE_RESULT != "wrong":
-                LAST_CURSE_RESULT = "wrong"
-                return "wrong"
+#         if "curse activated" in msg and "wrong answer" in msg:
+#             if LAST_CURSE_RESULT != "wrong":
+#                 LAST_CURSE_RESULT = "wrong"
+#                 return "wrong"
 
-        if "curse lifted" in msg or "correct answer" in msg:
-            if LAST_CURSE_RESULT != "correct":
-                LAST_CURSE_RESULT = "correct"
-                return "correct"
+#         if "curse lifted" in msg or "correct answer" in msg:
+#             if LAST_CURSE_RESULT != "correct":
+#                 LAST_CURSE_RESULT = "correct"
+#                 return "correct"
 
-    return None
+#     return None
 # ---------------- MAIN LOOP ----------------
 def agent_loop(game_id, agent_id):
     global LAST_ATTACK_TARGET, LAST_KILL_REGION
@@ -1898,12 +1898,12 @@ def agent_loop(game_id, agent_id):
 
             if not state:
                 continue
-            result = check_curse_result(state)
+            # result = check_curse_result(state)
 
-            if result == "wrong":
-                log("❌ CURSE ANSWER SALAH")
-            elif result == "correct":
-                log("✅ CURSE ANSWER BENAR")
+            # if result == "wrong":
+            #     log("❌ CURSE ANSWER SALAH")
+            # elif result == "correct":
+            #     log("✅ CURSE ANSWER BENAR")
 
             current_agents = {
                 a["id"]: a for a in state.get("visibleAgents", [])
