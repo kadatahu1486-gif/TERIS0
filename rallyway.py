@@ -282,13 +282,13 @@ def apply_style(answer, bg, style, question=""):
             "math": "short_natural", #benar
             "count": "short_natural", #letter benar
             "logic_transitive": "short_natural", #A is larger than B. B is larger than C.' Is A larger than C?  benar
-            "logic": "full", #full_there salah
+            "logic": "short_natural", #full_there salah #full salah
             "string": "short_natural",
             "default": "auto"
         },
 
         "include": {
-            "math": "short_natural", #short_natural test full_there salah
+            "math": "full_natural", #short_natural salah full_there salah
             "count": "short_natural", #what is the number 7? benar short_natural
             "logic_conditional": "short_natural", #scene_short salah
             "logic_transitive": "short_natural",
@@ -327,7 +327,13 @@ def apply_style(answer, bg, style, question=""):
     # =========================
     elif rule == "full":
         return f"{answer}. {full}"
-
+    
+    # =========================
+    # FULL_NATURAL
+    # =========================
+    elif rule == "full_natural":
+        return f"{answer}. {full.lower()}"
+    
     # =========================
     # SHORT_NATURAL
     # =========================
@@ -1874,25 +1880,25 @@ def send_finish_telegram(result, game_id, kills, deaths):
     except Exception as e:
         log(f"⚠ TG FINISH ERROR: {e}")
 
-# LAST_CURSE_RESULT = None
+LAST_CURSE_RESULT = None
 
-# def check_curse_result(state):
-#     global LAST_CURSE_RESULT
+def check_curse_result(state):
+    global LAST_CURSE_RESULT
 
-#     for log in state.get("recentLogs", []):
-#         msg = (log.get("message") or "").lower()
+    for log in state.get("recentLogs", []):
+        msg = (log.get("message") or "").lower()
 
-#         if "curse activated" in msg and "wrong answer" in msg:
-#             if LAST_CURSE_RESULT != "wrong":
-#                 LAST_CURSE_RESULT = "wrong"
-#                 return "wrong"
+        if "curse activated" in msg and "wrong answer" in msg:
+            if LAST_CURSE_RESULT != "wrong":
+                LAST_CURSE_RESULT = "wrong"
+                return "wrong"
 
-#         if "curse lifted" in msg or "correct answer" in msg:
-#             if LAST_CURSE_RESULT != "correct":
-#                 LAST_CURSE_RESULT = "correct"
-#                 return "correct"
+        if "curse lifted" in msg or "correct answer" in msg:
+            if LAST_CURSE_RESULT != "correct":
+                LAST_CURSE_RESULT = "correct"
+                return "correct"
 
-#     return None
+    return None
 # ---------------- MAIN LOOP ----------------
 def agent_loop(game_id, agent_id):
     global LAST_ATTACK_TARGET, LAST_KILL_REGION
@@ -2006,12 +2012,12 @@ def agent_loop(game_id, agent_id):
 
             if not state:
                 continue
-            # result = check_curse_result(state)
+            result = check_curse_result(state)
 
-            # if result == "wrong":
-            #     log("❌ CURSE ANSWER SALAH")
-            # elif result == "correct":
-            #     log("✅ CURSE ANSWER BENAR")
+            if result == "wrong":
+                log("❌ CURSE ANSWER SALAH")
+            elif result == "correct":
+                log("✅ CURSE ANSWER BENAR")
 
             current_agents = {
                 a["id"]: a for a in state.get("visibleAgents", [])
