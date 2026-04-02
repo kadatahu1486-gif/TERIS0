@@ -159,207 +159,101 @@ def detect_curse(state, my_id):
         "senderId": latest_curse.get("senderId")
     }
 
-# =========================
-# 🌸 CLEAN BACKGROUND
-# =========================
-def clean_bg(text):
-    text = re.sub(r"^(note:|context:|background:|scene:|setting:)\s*", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"\b(picture|imagine)\b\s*", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"\b(acknowledge|mention|include|reference|respond|react|weave)\b.*", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"\b(in your answer|in your reply)\b.*", "", text, flags=re.IGNORECASE).strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+def extract_core(bg):
+    """
+    Ambil noun phrase sederhana dari background
+    Contoh:
+    'There is a frozen lantern soaring outside'
+    → 'frozen lantern'
+    """
+    words = bg.lower().replace(".", "").split()
 
-# =========================
-# 🔹 SHORTEN BACKGROUND
-# =========================
-def shorten_bg(text):
-    text = re.sub(r"\b(leaping|drifting|flowing|spinning|crossing|echoing|floating|rising|falling|soaring|shining|humming|fading|weaving)\b", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bin the background\b", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(is|was|were|are|seen)\b", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^there is\s+", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+", " ", text).strip()
+    skip = {
+        "there", "is", "was", "were", "are",
+        "a", "an", "the",
+        "picture", "imagine"
+    }
+    
+    core = []
+    for w in words:
+        if w in skip:
+            continue
+        core.append(w)
+        if len(core) == 2:
+            break
 
-    words = text.split()
+    return " ".join(core)
 
-    # 🔥 ambil maksimal 3 kata pertama
-    core = " ".join(words[:3])
 
-    return core.lower()
+def clean_background(bg):
+    bg = bg.strip()
 
-# =========================
-# 🔹 DETECT QUESTION TYPE
-# =========================
-def detect_question_type(q):
-    q_lower = q.lower()
+    # buang prefix umum
+    prefixes = ["Scene:", "Context:", "Background:", "Note:", "Setting:"]
+    for p in prefixes:
+        if bg.lower().startswith(p.lower()):
+            bg = bg[len(p):].strip()
 
-    # =========================
-    # PRIORITAS TINGGI (🔥 JANGAN KETABRAK)
-    # =========================
+    # 🔥 BUANG kata pembuka visual
+    starters = ["picture", "imagine"]
+    words = bg.split()
+    if words and words[0].lower() in starters:
+        bg = " ".join(words[1:])
 
-    # CONDITIONAL (If ..., Do I ...)
-    if "if" in q_lower and "do i" in q_lower:
-        return "logic_conditional"
+    # buang instruksi belakang
+    cut_phrases = [
+        "mention this",
+        "include a brief mention",
+        "reference this",
+        "acknowledge this",
+        "weave this"
+    ]
+    for cp in cut_phrases:
+        if cp in bg.lower():
+            idx = bg.lower().find(cp)
+            bg = bg[:idx].strip()
 
-    # TRANSITIVE
-    if "is larger than" in q_lower:
-        return "logic_transitive"
+    return bg.strip(" .")
 
-    # TRUE / FALSE STATEMENT
-    if "is this true" in q_lower:
-        return "logic"
 
-    # CONTRADICTION
-    if "contradiction" in q_lower or "paradox" in q_lower:
-        return "contradiksi"
-
-    # =========================
-    # LOGIC STRUCTURE
-    # =========================
-
-    # ALL ... ARE ...
-    if re.search(r"\ball .* are .*\b", q_lower):
-        return "bird"
-
-    # X IS A Y (lebih spesifik biar gak ganggu "it is raining")
-    if re.search(r"\b\w+ is a \w+\b", q_lower):
-        return "logic_is"
-
-    # =========================
-    # MATH / COUNT / STRING
-    # =========================
-
-    if re.search(r"\bwhat is\b|\d+\s*[\+\-\*/x×÷]\s*\d+", q_lower):
-        return "math"
-
-    if "uppercase" in q_lower or "letters" in q_lower:
-        return "count"
-
-    if "how many" in q_lower:
-        return "count"
-
-    if "spell" in q_lower and "backwards" in q_lower:
-        return "string"
-
+def detect_style(question):
+    q = question.lower()
+    for s in ["mention", "include", "reference", "acknowledge", "weave"]:
+        if s in q:
+            return s
     return "default"
 
-# =========================
-# 🔹 APPLY STYLE
-# =========================
-def apply_style(answer, bg, style, question=""):
-    if not bg:
+
+def perfect_curse_answer(answer, background, question):
+    style = detect_style(question)
+    bg_clean = clean_background(background)
+
+    if not bg_clean:
         return answer
 
-    full = bg.strip()
-    short = shorten_bg(bg)
-    q_type = detect_question_type(question)
+    core = extract_core(bg_clean)
 
-    style_map = {
+    # 🔥 WEAVE (PALING STRICT)
+    if style == "weave":
+        return f"{answer}. there is {bg_clean.lower()}"
 
-        "weave": {
-            "math": "full_there", #benar
-            "count": "full_there",
-            "logic_transitive": "full_there",
-            "logic": "full_there",
-            "abc": "short_natural",
-            "string": "full_there",
-            "default": "full_there"
-        },
+    # 🔥 REFERENCE (pakai full)
+    elif style == "reference":
+        return f"{answer}. {bg_clean.lower()}"
 
-        "acknowledge": {
-            "math": "short_natural", #benar
-            "count": "short_natural", #Hallo World Bye full_there salah
-            "logic_transitive": "short_natural",
-            "bird": "short_natural", #bener
-            "contradiksi": "full", #short_natural salah
-            "logic": "full",  #full_there salah
-            "abc": "short_natural",
-            "string": "full_there",
-            "default": "full_there"
-        },
+    # 🔥 MENTION (short tapi kadang full lebih aman)
+    elif style == "mention":
+        return f"{answer}. {core.capitalize()}"
 
-        "mention": {
-            "math": "short_natural", #benar
-            "count": "short_natural", #letter benar
-            "logic_transitive": "short_natural", #A is larger than B. B is larger than C.' Is A larger than C?  benar
-            "logic": "short_natural", #full_there salah #full salah
-            "string": "short_natural",
-            "default": "auto"
-        },
+    # 🔥 INCLUDE (lebih aman full, bukan core)
+    elif style == "include":
+        return f"{answer}. {bg_clean}"
 
-        "include": {
-            "math": "full_natural", #short_natural salah full_there salah
-            "count": "short_natural", #what is the number 7? benar short_natural
-            "logic_conditional": "short_natural", #scene_short salah
-            "logic_transitive": "short_natural",
-            "logic": "full", #scene_short salah short_natural salah
-            "default": "auto"
-        },
+    # 🔥 ACKNOWLEDGE (biasanya full)
+    elif style == "acknowledge":
+        return f"{answer}. {bg_clean}"
 
-        "reference": {
-            "math": "short_natural", #benar
-            "count": "short_natural",
-            "logic_transitive": "short_natural", #full_there salah
-            "logic": "full_there", #full salah short_natural salah
-            "string": "full", #bener
-            "default": "auto"
-        },
-
-        "respond": {
-            "default": "scene_short"
-        }
-    }
-
-    rule = style_map.get(style, {}).get(q_type, "auto")
-
-    # =========================
-    # FULL_THERE
-    # =========================
-    if rule == "full_there":
-        first_word = full.split()[0].lower() if full.split() else ""
-        if first_word in ["there", "an", "the"]:
-            return f"{answer}. {full}"
-        else:
-            return f"{answer}. there is {full}"
-
-    # =========================
-    # FULL
-    # =========================
-    elif rule == "full":
-        return f"{answer}. {full}"
-    
-    # =========================
-    # FULL_NATURAL
-    # =========================
-    elif rule == "full_natural":
-        return f"{answer}. {full.lower()}"
-    
-    # =========================
-    # SHORT_NATURAL
-    # =========================
-    elif rule == "short_natural":
-        # Hilangkan kata 'there' & kata sifat yang sering menempel
-        short_clean = " ".join([w for w in short.split() if w.lower() != "there"])
-        # Ambil maksimal 3 kata
-        short_clean = " ".join(short_clean.split()[:3]).capitalize()
-        return f"{answer}. {short_clean}"
-
-    # =========================
-    # SCENE_SHORT
-    # =========================
-    elif rule == "scene_short":
-        return f"{answer}. The scene shows {short.capitalize()}"
-
-    # =========================
-    # AUTO fallback
-    # =========================
-    elif rule == "auto":
-        if len(bg.split()) > 6:
-            return f"{answer}. {full}"
-        else:
-            return f"{answer}. {short.capitalize()}"
-
-    return answer
+    return f"{answer}. {core.capitalize()}"
 
 # =========================
 # 🧠 SOLVER CORE
@@ -535,23 +429,15 @@ def solve_curse(question):
         answer = solve_logic(main_q)
 
         # =========================
-        # STYLE
-        # =========================
-        style = "default"
-        instr_match = re.search(r"(acknowledge|mention|include|reference|respond|weave)", q, re.IGNORECASE)
-        if instr_match:
-            style = instr_match.group(1).lower()
-
-        # =========================
         # CLEAN BG
         # =========================
-        bg = clean_bg(background)
+        bg = clean_background(background)
 
         # =========================
         # APPLY STYLE
         # =========================
         if answer != "idk" and bg:
-            answer = apply_style(answer, bg, style, question=q)
+            answer = perfect_curse_answer(answer, background, question)
 
         # =========================
         # FINAL CLEAN
