@@ -27,6 +27,9 @@ if not API_KEY:
 
 AGENT_NAME = os.getenv("AGENT_NAME", "ForTres")
 
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+if not PRIVATE_KEY:
+    raise Exception("PRIVATE_KEY tidak ditemukan di environment")
 
 session = requests.Session()
 
@@ -74,20 +77,19 @@ TEAM_PREFIXES = ("ForTres", "SEKAI", "GORIS", "GLORIES",
                 "BETA", "GAMMA", "DELTA", "EPSILON", "ZETTA", "THETA",
                 "IOTA", "KAPPA", "LAMBDA", "MU", "NU", "XI", "OMICRON",
                 "PI", "RHO", "SIGMA", "TAU", "UPSILON", "PHI", "CHI",
-                "PSI", "OMEGA", "FORCE", "VORTEX", "NOVA", "ECLIPSE")
-
+                "PSI", "OMEGA", "FORCE", "VORTEX", "NOVA", "ECLIPSE", "AADS")
 def is_teammate(name):
     if not name:
         return False
     return isinstance(name, str) and name.startswith(TEAM_PREFIXES)
 TARGET_LOCK = {
     "id": None,
-    "until_turn": 0
+    "until_turn": 8
 }
 last_regions = []
 last_target_id = None
 TEAMMATE_MEMORY = {}
-REGROUP_MODE = True
+REGROUP_MODE = False
 SQUAD_TARGET = None
 TEAM_MOVE_TARGET = None
 LAST_SAFE_REGION = None
@@ -455,7 +457,7 @@ def solve_curse(question):
     except Exception as e:
         print("error:", e)
         return "idk"
-        
+
 def is_safe_goal(rid, state):
     pending_dz = {
         r["id"] if isinstance(r, dict) else r
@@ -582,7 +584,7 @@ def choose_goal(state):
     # =========================
     # 🩸 PRIORITY 2: ESCAPE
     # =========================
-    if hp < 31:
+    if hp < 45:
         safe = [
             r for r in memory_safe_regions(state)
             if r not in [e.get("regionId") for e in visible_agents if not is_guardian(e)]
@@ -712,7 +714,6 @@ def log(msg):
     time_str = datetime.now(WITA).strftime('%H:%M:%S')
     print(f"[{time_str}] [{AGENT_NAME}] {msg}")
 
-from collections import Counter
 
 def get_team_center(state):
     agents = state.get("visibleAgents", [])
@@ -939,6 +940,14 @@ def send_register_telegram(AGENT_NAME, game_id, agent_id):
 
     except Exception as e:
         log(f"⚠ TG REGISTER ERROR: {e}")
+        
+def get_balance():
+    res = safe_get(f"{BASE_URL}/accounts/me")
+    if not res:
+        return 0
+
+    data = res.json().get("data", {})
+    return data.get("balance", 0)
 
 def join_or_create():
     while True:
@@ -950,30 +959,82 @@ def join_or_create():
 
         waiting_games = res.json().get("data", [])
         if waiting_games:
-            # Cari hanya FREE game
-            free_games = [
-                g for g in waiting_games
-                if g.get("entryType", "").lower() == "free"
-            ]
+            balance = get_balance()
+            print(f"💰 Balance: {balance} sMoltz")
 
-            if free_games:
-                game = random.choice(free_games)  # 🔥 FIX
-                print(f"🎮 Join FREE game: {game['name']}")
+            if balance >= 100:
+                # Prioritas PAID
+                target_games = [
+                    g for g in waiting_games
+                    if g.get("entryType", "").lower() == "paid"
+                ]
+                print("🎯 Mode: PAID")
+            else:
+                # Fallback ke FREE
+                target_games = [
+                    g for g in waiting_games
+                    if g.get("entryType", "").lower() == "free"
+                ]
+                print("🎯 Mode: FREE")
+
+            if target_games:
+                game = random.choice(target_games)  # 🔥 FIX
+                print(f"🎮 Join game: {game['name']}")
             else:
                 game = None
         else:
             game = None
 
         if not game:
-            print("⚠ Tidak ada FREE game waiting, tunggu...")
+            print("⚠ Tidak ada game waiting, tunggu...")
             time.sleep(0.1)
             continue
 
         # 2️⃣ Register agent dulu
-        reg = safe_post(
-            f"{BASE_URL}/games/{game['id']}/agents/register",
-            {"name": AGENT_NAME}
-        )
+        entry_type = game.get("entryType", "").lower()
+
+        if entry_type == "paid":
+            print(f"💰 Join PAID game: {game['name']}")
+
+            # 1️⃣ Ambil EIP-712 message
+            msg_res = safe_get(f"{BASE_URL}/games/{game['id']}/join-paid/message")
+
+            if not msg_res:
+                print("❌ Gagal ambil message")
+                continue
+
+            msg_data = msg_res.json()["data"]
+
+            # 2️⃣ SIGN (pakai wallet private key kamu)
+            from eth_account import Account
+            from eth_account.messages import encode_typed_data
+
+            signed = Account.sign_message(
+                encode_typed_data(full_message=msg_data),
+                private_key=PRIVATE_KEY
+            )
+
+            signature = signed.signature.hex()
+
+            # 3️⃣ POST join-paid (endpoint BENAR)
+            reg = safe_post(
+                f"{BASE_URL}/games/{game['id']}/join-paid",
+                {
+                    "deadline": msg_data["message"]["deadline"],
+                    "signature": signature,
+                    "mode": "offchain"  # pakai sMoltz
+                }
+            )
+
+        else:
+            print(f"🎮 Join FREE game: {game['name']}")
+
+            reg = safe_post(
+                f"{BASE_URL}/games/{game['id']}/agents/register",
+                {
+                    "name": AGENT_NAME
+                }
+            )
 
         if not reg:
             print("❌ Register gagal (safe_post returned None)")
@@ -984,7 +1045,7 @@ def join_or_create():
 
         if reg.status_code in [200, 201, 202] and not error_code:
             # ✅ SUCCESS
-            agent_id = data["data"]["id"]
+            agent_id = data["data"]["agentId"]
             from tg_report import send_game_start
 
             send_register_telegram(AGENT_NAME, game["id"], agent_id)
@@ -1388,7 +1449,9 @@ def choose_best_target(enemies, my_attack, my_hp, state):
 
     # Reset jika target lama tidak ada lagi
     if last_target_id and not any(e.get("id") == last_target_id for e in enemies):
-        last_target_id = None
+        # tahan target walau hilang
+        if last_target_id:
+            return {"target": LAST_SEEN.get(last_target_id), "type": "move"}
     best_score = -999
     best_target = None
 
@@ -1643,7 +1706,13 @@ def choose_action(state):
         and not is_teammate(a.get("name"))
         and a.get("hp", 0) > 0
     ]
-    
+    global LAST_SEEN
+
+    LAST_SEEN = {}
+
+# update setiap lihat musuh
+    for e in visible_agents:
+        LAST_SEEN[e["id"]] = e["regionId"]   # ❌ ERROR DI SINI
     enemies_here = [
         a for a in visible_agents
         if a.get("regionId") == my_region
@@ -1708,7 +1777,8 @@ def choose_action(state):
     if monsters_here:
         log("👹 PRIORITY MONSTER ENGAGE")
         target = min(monsters_here, key=lambda x: x.get("hp", 999))
-
+        if me.get("hp", 100) <= 40:
+            return None
         return {
             "type": "attack",
             "targetId": target.get("id"),
