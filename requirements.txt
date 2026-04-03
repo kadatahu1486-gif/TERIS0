@@ -1,2 +1,4 @@
 requests
 python-dotenv
+web3==6.15.1
+eth-account==0.10.0
