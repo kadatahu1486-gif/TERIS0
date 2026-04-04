@@ -996,83 +996,33 @@ def join_or_create():
 
         waiting_games = res.json().get("data", [])
         if waiting_games:
-            balance = get_balance()
-            print(f"💰 Balance: {balance} sMoltz")
+            # Cari hanya FREE game
+            free_games = [
+                g for g in waiting_games
+                if g.get("entryType", "").lower() == "free"
+            ]
 
-            if balance >= 100:
-                # Prioritas PAID
-                target_games = [
-                    g for g in waiting_games
-                    if g.get("entryType", "").lower() == "paid"
-                ]
-                print("🎯 Mode: PAID")
-            else:
-                # Fallback ke FREE
-                target_games = [
-                    g for g in waiting_games
-                    if g.get("entryType", "").lower() == "free"
-                ]
-                print("🎯 Mode: FREE")
-
-            if target_games:
-                game = random.choice(target_games)  # 🔥 FIX
-                print(f"🎮 Join game: {game['name']}")
+            if free_games:
+                for game in free_games:
+                    print(f"🎮 Join FREE game: {game['name']}")
             else:
                 game = None
         else:
             game = None
 
         if not game:
-            print("⚠ Tidak ada game waiting, tunggu...")
+            print("⚠ Tidak ada FREE game waiting, tunggu...")
             time.sleep(0.1)
             continue
 
         # 2️⃣ Register agent dulu
-        entry_type = game.get("entryType", "").lower()
-
-        if entry_type == "paid":
-            print(f"💰 Join PAID game: {game['name']}")
-
-            # 1️⃣ Ambil EIP-712 message
-            msg_res = safe_get(f"{BASE_URL}/games/{game['id']}/join-paid/message")
-            if not msg_res:
-                print("❌ Gagal ambil message")
-                time.sleep(1)
-                continue
-
-            msg_data = msg_res.json().get("data")
-            if not msg_data:
-                print("❌ Message kosong, retry...")
-                time.sleep(1)
-                continue
-
-            signed = Account.sign_message(
-                encode_typed_data(full_message=msg_data),
-                private_key=PRIVATE_KEY
-            )
-            signature = signed.signature.hex()
-
-            # 3️⃣ POST join-paid → sertakan Agent EOA
-            payload = {
-                "agent": wallet_address,   # Agent EOA wajib
-                "deadline": msg_data["message"]["deadline"],
-                "signature": signature,
-                "mode": "offchain"
-            }
-
-            reg = safe_post(f"{BASE_URL}/games/{game['id']}/join-paid", payload)
-
-        else:
-            # FREE game
-            print(f"🎮 Join FREE game: {game['name']}")
-            reg = safe_post(
-                f"{BASE_URL}/games/{game['id']}/agents/register",
-                {"name": AGENT_NAME}
-            )
+        reg = safe_post(
+            f"{BASE_URL}/games/{game['id']}/agents/register",
+            {"name": AGENT_NAME}
+        )
 
         if not reg:
-            print("❌ Register gagal (safe_post returned None), retry 3 detik...")
-            time.sleep(3)
+            print("❌ Register gagal (safe_post returned None)")
             continue
 
         data = reg.json()
@@ -1080,12 +1030,8 @@ def join_or_create():
 
         if reg.status_code in [200, 201, 202] and not error_code:
             # ✅ SUCCESS
-            agent_id = data["data"]["agentId"]
-            from tg_report import send_game_start
-
-            send_register_telegram(AGENT_NAME, game["id"], agent_id)
+            agent_id = data["data"]["id"]
             print("✅ Register sukses")
-            print("AGENT NAME", AGENT_NAME)
             print("Game ID:", game["id"])
             print("Agent ID:", agent_id)
             with open("session.json","w") as f:
@@ -1900,7 +1846,11 @@ def agent_loop(game_id, agent_id):
                 if not timestr:
                     return None
                 return datetime.fromisoformat(timestr.replace("Z", "+00:00")).timestamp() 
+    global LAST_LOGS_CONTENT, LAST_LOGS_UPDATE
 
+    # Inisialisasi tracker
+    LAST_LOGS_CONTENT = []
+    LAST_LOGS_UPDATE = time.time()
     last_turn = None
     last_turn_action_sent = None  # Track apakah action sudah dikirim untuk turn ini
     last_turn_time = time.time()
@@ -1908,32 +1858,6 @@ def agent_loop(game_id, agent_id):
     while True:
         try:
             current_agents = {}
-
-            if time.time() - last_state_update > STATE_TIMEOUT:
-
-                log("⚠ 60s tanpa update state → fallback action")
-
-                if LAST_STATE and LAST_STATE.get("canAct"):
-
-                    try:
-                        action = choose_action(LAST_STATE)
-
-                        if action:
-                            safe_post(
-                                f"{BASE_URL}/games/{game_id}/agents/{agent_id}/action",
-                                {"action": action}
-                            )
-
-                            last_turn_action_sent = last_turn
-
-                            log(f"⚡ FALLBACK ACTION → {action['type']}")
-
-                    except Exception as e:
-                        log(f"⚠ fallback error: {e}")
-
-                last_state_update = time.time()
-                time.sleep(1.5)
-                continue
             
             # 1️⃣ Cek game status
             r_game = safe_get(f"{BASE_URL}/games/{game_id}")
@@ -2008,6 +1932,31 @@ def agent_loop(game_id, agent_id):
             #     log("❌ CURSE ANSWER SALAH")
             # elif result == "correct":
             #     log("✅ CURSE ANSWER BENAR")
+
+            current_logs = state.get("recentLogs", [])
+
+            # ---------------- Update recentLogs tracker ----------------
+            if current_logs != LAST_LOGS_CONTENT:
+                LAST_LOGS_CONTENT = current_logs
+                LAST_LOGS_UPDATE = time.time()
+
+            # ---------------- Fallback logic ----------------
+            elif time.time() - LAST_LOGS_UPDATE > 70:
+                log("⚠ 70s tanpa update recentLogs → fallback action")
+                if LAST_STATE:
+                    try:
+                        action = choose_action(LAST_STATE)
+                        if action:
+                            safe_post(
+                                f"{BASE_URL}/games/{game_id}/agents/{agent_id}/action",
+                                {"action": action}
+                            )
+                            log(f"⚡ FALLBACK ACTION → {action['type']}")
+                    except Exception as e:
+                        log(f"⚠ fallback error: {e}")
+
+                # reset timer supaya tidak spam fallback
+                LAST_LOGS_UPDATE = time.time()
 
             current_agents = {
                 a["id"]: a for a in state.get("visibleAgents", [])
