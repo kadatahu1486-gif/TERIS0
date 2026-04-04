@@ -992,7 +992,6 @@ def join_or_create():
         res = safe_get(f"{BASE_URL}/games?status=waiting")
         if not res:
             print("⚠ Tidak bisa ambil daftar game...")
-            time.sleep(1)
             continue
 
         waiting_games = res.json().get("data", [])
@@ -1025,9 +1024,10 @@ def join_or_create():
 
         if not game:
             print("⚠ Tidak ada game waiting, tunggu...")
-            time.sleep(1)
+            time.sleep(0.1)
             continue
 
+        # 2️⃣ Register agent dulu
         entry_type = game.get("entryType", "").lower()
 
         if entry_type == "paid":
@@ -1080,25 +1080,22 @@ def join_or_create():
 
         if reg.status_code in [200, 201, 202] and not error_code:
             # ✅ SUCCESS
-            # Ambil agent_id dari game aktif setelah join PAID
-            agent_id = data.get("data", {}).get("agentId") or data.get("data", {}).get("id")
-            if not agent_id:
-                print("❌ Agent ID tidak ditemukan, response:", data)
-                time.sleep(3)
-                continue
+            agent_id = data["data"]["agentId"]
+            from tg_report import send_game_start
 
             send_register_telegram(AGENT_NAME, game["id"], agent_id)
             print("✅ Register sukses")
-            print("AGENT NAME:", AGENT_NAME)
+            print("AGENT NAME", AGENT_NAME)
             print("Game ID:", game["id"])
             print("Agent ID:", agent_id)
-
-            with open("session.json", "w") as f:
-                json.dump({"game_id": game["id"], "agent_id": agent_id}, f)
-
+            with open("session.json","w") as f:
+                json.dump({
+                    "game_id": game["id"],
+                    "agent_id": agent_id
+                }, f)
             return game["id"], agent_id
 
-        # 🔁 Kalau agent sudah di game lain → reconnect
+        # 🔥 Kalau agent sudah di game lain → reconnect
         if error_code == "ACCOUNT_ALREADY_IN_GAME":
             current_game_id = data.get("error", {}).get("currentGameId")
             print(f"⚠ Agent sudah aktif di game lain: {current_game_id}")
@@ -1112,12 +1109,24 @@ def join_or_create():
                 return start_session()
             else:
                 print("❌ Gagal ambil agent_id dari game lama, retry 5 detik...")
-                time.sleep(5)
                 continue
 
         # 🔥 Error lain → retry
         print(f"❌ Register gagal, error_code={error_code}, retry 3 detik...")
-        time.sleep(3)
+
+        # ✅ SUCCESS
+        agent_id = data["data"]["id"]
+
+        print("✅ Register sukses")
+        print("Game ID:", game["id"])
+        print("Agent ID:", agent_id)
+        with open("session.json","w") as f:
+            json.dump({
+                "game_id": game["id"],
+                "agent_id": agent_id
+            }, f)
+
+        return game["id"], agent_id
 # ---------------- LOGIC ----------------
 def get_region_name(region_id, state):
     # 1️⃣ cek visible dulu
