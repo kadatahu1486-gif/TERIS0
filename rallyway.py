@@ -959,82 +959,30 @@ def join_or_create():
 
         waiting_games = res.json().get("data", [])
         if waiting_games:
-            balance = get_balance()
-            print(f"💰 Balance: {balance} sMoltz")
+            # Cari hanya FREE game
+            free_games = [
+                g for g in waiting_games
+                if g.get("entryType", "").lower() == "free"
+            ]
 
-            if balance >= 100:
-                # Prioritas PAID
-                target_games = [
-                    g for g in waiting_games
-                    if g.get("entryType", "").lower() == "paid"
-                ]
-                print("🎯 Mode: PAID")
-            else:
-                # Fallback ke FREE
-                target_games = [
-                    g for g in waiting_games
-                    if g.get("entryType", "").lower() == "free"
-                ]
-                print("🎯 Mode: FREE")
-
-            if target_games:
-                game = random.choice(target_games)  # 🔥 FIX
-                print(f"🎮 Join game: {game['name']}")
+            if free_games:
+                game = random.choice(free_games)  # 🔥 FIX
+                print(f"🎮 Join FREE game: {game['name']}")
             else:
                 game = None
         else:
             game = None
 
         if not game:
-            print("⚠ Tidak ada game waiting, tunggu...")
+            print("⚠ Tidak ada FREE game waiting, tunggu...")
             time.sleep(0.1)
             continue
 
         # 2️⃣ Register agent dulu
-        entry_type = game.get("entryType", "").lower()
-
-        if entry_type == "paid":
-            print(f"💰 Join PAID game: {game['name']}")
-
-            # 1️⃣ Ambil EIP-712 message
-            msg_res = safe_get(f"{BASE_URL}/games/{game['id']}/join-paid/message")
-
-            if not msg_res:
-                print("❌ Gagal ambil message")
-                continue
-
-            msg_data = msg_res.json()["data"]
-
-            # 2️⃣ SIGN (pakai wallet private key kamu)
-            from eth_account import Account
-            from eth_account.messages import encode_typed_data
-
-            signed = Account.sign_message(
-                encode_typed_data(full_message=msg_data),
-                private_key=PRIVATE_KEY
-            )
-
-            signature = signed.signature.hex()
-
-            # 3️⃣ POST join-paid (endpoint BENAR)
-            reg = safe_post(
-                f"{BASE_URL}/games/{game['id']}/join-paid",
-                {
-                    "deadline": msg_data["message"]["deadline"],
-                    "signature": signature,
-                    "mode": "offchain"  # pakai sMoltz
-                }
-            )
-
-        else:
-            print(f"🎮 Join FREE game: {game['name']}")
-
-            reg = safe_post(
-                f"{BASE_URL}/games/{game['id']}/agents/register",
-                {
-                    "name": AGENT_NAME
-                }
-            )
+        reg = safe_post(
+            f"{BASE_URL}/games/{game['id']}/agents/register",
+            {"name": AGENT_NAME}
+        )
 
         if not reg:
             print("❌ Register gagal (safe_post returned None)")
@@ -1045,7 +993,7 @@ def join_or_create():
 
         if reg.status_code in [200, 201, 202] and not error_code:
             # ✅ SUCCESS
-            agent_id = data["data"]["agentId"]
+            agent_id = data["data"]["id"]
             from tg_report import send_game_start
 
             send_register_telegram(AGENT_NAME, game["id"], agent_id)
