@@ -996,42 +996,108 @@ def join_or_create():
 
         waiting_games = res.json().get("data", [])
         if waiting_games:
-            # Cari hanya FREE game
-            free_games = [
-                g for g in waiting_games
-                if g.get("entryType", "").lower() == "free"
-            ]
+            balance = get_balance()
+            print(f"💰 Balance: {balance} sMoltz")
 
-            if free_games:
-                for game in free_games:
-                    print(f"🎮 Join FREE game: {game['name']}")
+            if balance >= 100:
+                # Prioritas PAID
+                target_games = [
+                    g for g in waiting_games
+                    if g.get("entryType", "").lower() == "paid"
+                ]
+                print("🎯 Mode: PAID")
+            else:
+                # Fallback ke FREE
+                target_games = [
+                    g for g in waiting_games
+                    if g.get("entryType", "").lower() == "free"
+                ]
+                print("🎯 Mode: FREE")
+
+            if target_games:
+                game = random.choice(target_games)  # 🔥 FIX
+                print(f"🎮 Join game: {game['name']}")
             else:
                 game = None
         else:
             game = None
 
         if not game:
-            print("⚠ Tidak ada FREE game waiting, tunggu...")
+            print("⚠ Tidak ada game waiting, tunggu...")
             time.sleep(0.1)
             continue
 
         # 2️⃣ Register agent dulu
-        reg = safe_post(
-            f"{BASE_URL}/games/{game['id']}/agents/register",
-            {"name": AGENT_NAME}
-        )
+        entry_type = game.get("entryType", "").lower()
+
+        if entry_type == "paid":
+            print(f"💰 Join PAID game: {game['name']}")
+
+            # 1️⃣ Ambil EIP-712 message
+            msg_res = safe_get(f"{BASE_URL}/games/{game['id']}/join-paid/message")
+            if not msg_res:
+                print("❌ Gagal ambil message")
+                time.sleep(1)
+                continue
+
+            msg_data = msg_res.json().get("data")
+            if not msg_data:
+                print("❌ Message kosong, retry...")
+                time.sleep(1)
+                continue
+
+            signed = Account.sign_message(
+                encode_typed_data(full_message=msg_data),
+                private_key=PRIVATE_KEY
+            )
+            signature = signed.signature.hex()
+
+            # 3️⃣ POST join-paid → sertakan Agent EOA
+            payload = {
+                "agent": wallet_address,   # Agent EOA wajib
+                "deadline": msg_data["message"]["deadline"],
+                "signature": signature,
+                "mode": "offchain"
+            }
+
+            reg = safe_post(f"{BASE_URL}/games/{game['id']}/join-paid", payload)
+
+        else:
+            # FREE game
+            print(f"🎮 Join FREE game: {game['name']}")
+            reg = safe_post(
+                f"{BASE_URL}/games/{game['id']}/agents/register",
+                {"name": AGENT_NAME}
+            )
 
         if not reg:
-            print("❌ Register gagal (safe_post returned None)")
+            print("❌ Register gagal (safe_post returned None), retry 3 detik...")
+            time.sleep(3)
             continue
 
         data = reg.json()
         error_code = data.get("error", {}).get("code")
+        data_resp = reg.json().get("data", {})
 
+        # Tentukan ID berdasarkan tipe game / key yang ada
+        if "logId" in data_resp:
+            game_agent_id = data_resp["logId"]  # PAID
+        elif "agentId" in data_resp:
+            game_agent_id = data_resp["agentId"]  # FREE
+        elif "id" in data_resp:
+            game_agent_id = data_resp["id"]      # fallback
+        else:
+            print("❌ Tidak ada ID di response", data_resp)
+            return None
+        
         if reg.status_code in [200, 201, 202] and not error_code:
             # ✅ SUCCESS
-            agent_id = data["data"]["id"]
+            agent_id = data.get("agentId") or data.get("id") or data.get("logId")
+            from tg_report import send_game_start
+
+            send_register_telegram(AGENT_NAME, game["id"], agent_id)
             print("✅ Register sukses")
+            print("AGENT NAME", AGENT_NAME)
             print("Game ID:", game["id"])
             print("Agent ID:", agent_id)
             with open("session.json","w") as f:
