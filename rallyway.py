@@ -999,7 +999,7 @@ def join_or_create():
             balance = get_balance()
             print(f"💰 Balance: {balance} sMoltz")
 
-            if balance >= 100:
+            if balance >= 500:
                 # Prioritas PAID
                 target_games = [
                     g for g in waiting_games
